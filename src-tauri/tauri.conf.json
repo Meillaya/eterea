@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.eterea.app",
   "build": {
-    "beforeDevCommand": { "script": "npx vite dev", "cwd": "../src/frontend" },
+    "beforeDevCommand": { "script": "bun run dev", "cwd": "../src/frontend" },
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": { "script": "npx vite build", "cwd": "../src/frontend" },
+    "beforeBuildCommand": { "script": "bun run build", "cwd": "../src/frontend" },
     "frontendDist": "../src/frontend/build"
   },
   "app": {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { importFile } from '$lib/api';
-  import { open as openDialog } from '@tauri-apps/api/dialog';
+  import { open as openDialog } from '@tauri-apps/plugin-dialog';
   
   interface Props {
     onclose: () => void;
@@ -154,6 +154,9 @@
         <!-- Drop Zone -->
         <div
           class="relative border-2 border-dashed rounded-xl p-12 text-center transition-colors {dragOver ? 'border-accent bg-accent/5' : 'border-border'}"
+          role="button"
+          tabindex="0"
+          aria-label="Import file drop zone"
           ondragover={(e) => { e.preventDefault(); dragOver = true; }}
           ondragleave={() => dragOver = false}
           ondrop={handleDrop}

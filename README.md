@@ -59,6 +59,3 @@ Output: `target/release/bundle/`
 - **Windows**: `%LOCALAPPDATA%\eterea\bookmarks.db`
 - **macOS**: `~/Library/Application Support/eterea/bookmarks.db`
 - **Linux**: `~/.local/share/eterea/bookmarks.db`
-
-
-MIT

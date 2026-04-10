@@ -7,7 +7,7 @@
   import LayoutToggle from '$lib/components/LayoutToggle.svelte';
   import SearchBar from '$lib/components/SearchBar.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
-  import { bookmarks, dateRange, feedMeta, isLoading, isLoadingMore, isRefreshing, searchQuery, selectedTag, stats, viewMode } from '$lib/stores/bookmarks.svelte';
+  import { bookmarks, dateRange, feedMeta, isLoading, isLoadingMore, isRefreshing, searchQuery, selectedTag, viewMode } from '$lib/stores/bookmarks.svelte';
   import { hydrateCachedLibrarySnapshot, loadMoreBookmarks, loadStats, refreshBookmarks } from '$lib/api';
 
   let showImportModal = $state(false);
@@ -73,64 +73,54 @@
     <Header onimport={() => (showImportModal = true)} />
 
     <main class="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8 xl:px-10">
-      <section class="grid gap-5 xl:grid-cols-[minmax(0,1fr),320px]">
-        <div class="panel rounded-[2rem] px-6 py-6">
-          <p class="eyebrow">Bookmark library</p>
-          <div class="mt-3 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div class="max-w-3xl">
-              <h2 class="font-display text-[2.5rem] leading-none italic text-text-primary sm:text-[3.2rem]">A calmer place to read what you saved.</h2>
-              <p class="mt-3 max-w-2xl text-sm leading-7 text-text-secondary sm:text-base">Search your archive, pull new bookmarks in from X, and keep the library local, searchable, and easy to scan.</p>
+      <section class="panel rounded-[2rem] px-6 py-6">
+        <div class="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+          <div class="max-w-3xl">
+            <p class="eyebrow">Bookmark library</p>
+            <h2 class="mt-3 font-display text-[2.5rem] leading-none italic text-text-primary sm:text-[3.2rem]">A calmer place to read what you saved.</h2>
+            <p class="mt-3 max-w-2xl text-sm leading-7 text-text-secondary sm:text-base">Keep the archive local, searchable, and easy to revisit. Search fast, move between layouts, and pull in new bookmarks without turning the app into a dashboard.</p>
+          </div>
+
+          <div class="grid gap-3 sm:grid-cols-3 xl:min-w-[420px]">
+            <div class="rounded-[1.4rem] border border-border-subtle bg-bg-secondary/60 px-4 py-4">
+              <p class="text-xs uppercase tracking-wide text-text-muted">Visible now</p>
+              <p class="mt-2 text-2xl font-mono text-text-primary">{bookmarks.value.length.toLocaleString()}</p>
             </div>
-            <div class="flex flex-wrap gap-2.5 text-sm">
-              <div class="rounded-full border border-border bg-bg-secondary/70 px-4 py-2 text-text-secondary"><span class="text-text-muted">Visible</span> <span class="ml-2 font-mono text-text-primary">{bookmarks.value.length.toLocaleString()}</span></div>
-              <div class="rounded-full border border-border bg-bg-secondary/70 px-4 py-2 text-text-secondary"><span class="text-text-muted">Total</span> <span class="ml-2 font-mono text-text-primary">{feedMeta.value.total.toLocaleString()}</span></div>
-              <div class="rounded-full border border-border bg-bg-secondary/70 px-4 py-2 text-text-secondary"><span class="text-text-muted">Filters</span> <span class="ml-2 font-mono text-text-primary">{activeFilterCount}</span></div>
+            <div class="rounded-[1.4rem] border border-border-subtle bg-bg-secondary/60 px-4 py-4">
+              <p class="text-xs uppercase tracking-wide text-text-muted">Archive total</p>
+              <p class="mt-2 text-2xl font-mono text-text-primary">{feedMeta.value.total.toLocaleString()}</p>
+            </div>
+            <div class="rounded-[1.4rem] border border-border-subtle bg-bg-secondary/60 px-4 py-4">
+              <p class="text-xs uppercase tracking-wide text-text-muted">Active filters</p>
+              <p class="mt-2 text-2xl font-mono text-text-primary">{activeFilterCount}</p>
             </div>
           </div>
         </div>
 
-        <aside class="panel rounded-[2rem] px-5 py-5">
-          <p class="eyebrow">At a glance</p>
-          {#if stats.value}
-            <div class="mt-4 space-y-3">
-              <div class="rounded-[1.3rem] border border-border-subtle bg-bg-secondary/60 p-4">
-                <p class="text-xs uppercase tracking-wide text-text-muted">Bookmarks</p>
-                <p class="mt-2 text-2xl font-mono text-text-primary">{stats.value.total_bookmarks.toLocaleString()}</p>
-              </div>
-              <div class="grid grid-cols-2 gap-3">
-                <div class="rounded-[1.2rem] border border-border-subtle bg-bg-secondary/60 p-4">
-                  <p class="text-xs uppercase tracking-wide text-text-muted">Favorites</p>
-                  <p class="mt-2 text-lg font-mono text-text-primary">{stats.value.favorite_bookmarks.toLocaleString()}</p>
-                </div>
-                <div class="rounded-[1.2rem] border border-border-subtle bg-bg-secondary/60 p-4">
-                  <p class="text-xs uppercase tracking-wide text-text-muted">Authors</p>
-                  <p class="mt-2 text-lg font-mono text-text-primary">{stats.value.unique_authors.toLocaleString()}</p>
-                </div>
-              </div>
-            </div>
-          {:else}
-            <div class="mt-4 h-32 rounded-[1.3rem] border border-border-subtle bg-bg-secondary/60"></div>
+        <div class="mt-5 flex flex-wrap items-center gap-3 text-sm text-text-secondary">
+          <span class="rounded-full border border-border bg-bg-secondary/70 px-4 py-2">Press <kbd class="rounded-full border border-border-subtle bg-bg-tertiary px-2 py-0.5 font-mono text-[11px] text-text-muted">/</kbd> to jump into search</span>
+          {#if viewMode.value === 'favorites'}
+            <span class="rounded-full bg-yellow-500/15 px-3 py-2 text-yellow-400">Favorites view</span>
+          {:else if viewMode.value === 'recent'}
+            <span class="rounded-full bg-accent/15 px-3 py-2 text-accent">Recent 30 days</span>
           {/if}
-        </aside>
+          <a href="/settings" class="rounded-full border border-border bg-bg-secondary/70 px-4 py-2 transition-colors hover:border-accent hover:text-text-primary">Open settings</a>
+          <button onclick={() => (showImportModal = true)} class="rounded-full border border-border bg-bg-secondary/70 px-4 py-2 text-text-primary transition-colors hover:border-accent hover:text-accent">Import bookmarks</button>
+        </div>
       </section>
 
       <section class="panel rounded-[2rem] px-5 py-5">
         <div class="grid gap-4 xl:grid-cols-[minmax(0,1fr),auto] xl:items-center">
           <SearchBar />
-          <div class="flex flex-wrap items-center gap-2 justify-start xl:justify-end">
+          <div class="flex flex-wrap items-center justify-start gap-2 xl:justify-end">
             <LayoutToggle />
             <DateFilter />
-            {#if viewMode.value === 'favorites'}
-              <span class="rounded-full bg-yellow-500/15 px-3 py-2 text-sm text-yellow-400">Favorites</span>
-            {:else if viewMode.value === 'recent'}
-              <span class="rounded-full bg-accent/15 px-3 py-2 text-sm text-accent">Recent 30 days</span>
-            {/if}
           </div>
         </div>
       </section>
 
       <section class="min-h-0 flex-1">
-          <div class="mb-4 flex items-center justify-between gap-4">
+        <div class="mb-4 flex items-center justify-between gap-4">
           <div>
             <p class="eyebrow">Reading feed</p>
             <h3 class="mt-1 text-xl font-medium text-text-primary">Saved posts</h3>

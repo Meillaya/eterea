@@ -25,12 +25,6 @@
 
     <div class="flex items-center gap-2 sm:gap-3">
       <a
-        href="/stats"
-        class="rounded-full border border-transparent px-4 py-2 text-sm text-text-secondary transition-colors hover:border-border hover:bg-bg-secondary/70 hover:text-text-primary"
-      >
-        Stats
-      </a>
-      <a
         href="/settings"
         class="rounded-full border border-transparent px-4 py-2 text-sm text-text-secondary transition-colors hover:border-border hover:bg-bg-secondary/70 hover:text-text-primary"
       >

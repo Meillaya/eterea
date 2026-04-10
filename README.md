@@ -159,6 +159,10 @@ target/release/bundle/
 
 For the active load-path performance and stats-reliability workstream, see [`docs/bookmark-load-performance.md`](docs/bookmark-load-performance.md). It captures the approved scope, review guardrails, and verification checklist for this area.
 
+## Frontend remake notes
+
+For the approved frontend-remake direction and review guardrails, see [`docs/frontend-remake-review.md`](docs/frontend-remake-review.md). It captures the product constraints, current code-quality hotspots, and verification checklist for the speed-first UI rebuild.
+
 ## Verification Commands
 
 Current recommended checks:

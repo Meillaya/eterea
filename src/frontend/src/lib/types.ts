@@ -61,3 +61,23 @@ export interface LinkPreview {
   site_name: string | null;
 }
 
+export interface XSyncStatus {
+  configured: boolean;
+  connected: boolean;
+  last_attempted_at: string | null;
+  last_synced_at: string | null;
+  last_status: string | null;
+  last_error: string | null;
+  last_imported_count: number | null;
+  last_skipped_count: number | null;
+  total_fetched: number | null;
+}
+
+export interface XImportSummary {
+  imported_count: number;
+  skipped_count: number;
+  total_fetched: number;
+  last_synced_at: string;
+  reauthenticated: boolean;
+  status_message: string;
+}

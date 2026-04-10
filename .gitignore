@@ -29,6 +29,9 @@ Thumbs.db
 # Logs
 *.log
 
+# OMX runtime state
+.omx/
+
 # Environment
 .env
 .env.local

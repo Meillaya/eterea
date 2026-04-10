@@ -4,6 +4,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 use uuid::Uuid;
 
 /// Represents a single Twitter/X bookmark with all associated metadata.
@@ -129,7 +130,8 @@ impl Bookmark {
     
     /// Extract hashtags from content
     pub fn extract_hashtags(&self) -> Vec<String> {
-        let re = regex::Regex::new(r"#(\w+)").unwrap();
+        static HASHTAG_RE: OnceLock<regex::Regex> = OnceLock::new();
+        let re = HASHTAG_RE.get_or_init(|| regex::Regex::new(r"#(\w+)").unwrap());
         re.captures_iter(&self.content)
             .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_lowercase()))
             .collect()
@@ -137,7 +139,8 @@ impl Bookmark {
     
     /// Extract mentions from content
     pub fn extract_mentions(&self) -> Vec<String> {
-        let re = regex::Regex::new(r"@(\w+)").unwrap();
+        static MENTION_RE: OnceLock<regex::Regex> = OnceLock::new();
+        let re = MENTION_RE.get_or_init(|| regex::Regex::new(r"@(\w+)").unwrap());
         re.captures_iter(&self.content)
             .filter_map(|cap| cap.get(1).map(|m| m.as_str().to_lowercase()))
             .collect()
@@ -318,4 +321,3 @@ mod tests {
         assert_eq!(mentions, vec!["rustlang"]);
     }
 }
-

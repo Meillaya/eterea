@@ -2,14 +2,22 @@
 //!
 //! Provides IPC commands for the frontend to interact with the Rust backend.
 
-use eterea_core::{Database, Ingester, Bookmark};
+mod x_sync;
+
+use eterea_core::{Bookmark, Database, Ingester};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::State;
+use x_sync::{
+    build_failed_sync_status_from_previous, build_success_sync_status,
+    import_bookmarks_from_x as sync_bookmarks_from_x, load_sync_status, metadata_key,
+    serialize_sync_status, XImportSummary, XSessionToken, XSyncStatus,
+};
 
 pub struct AppState {
     db: Mutex<Database>,
+    x_session: Mutex<Option<XSessionToken>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -106,7 +114,7 @@ mod commands {
             total_bookmarks: stats.total_bookmarks,
             unique_authors: stats.unique_authors,
             unique_tags: stats.unique_tags,
-        favorite_bookmarks: stats.favorite_bookmarks,
+            favorite_bookmarks: stats.favorite_bookmarks,
             earliest_date: stats.earliest_date.map(|d| d.to_rfc3339()),
             latest_date: stats.latest_date.map(|d| d.to_rfc3339()),
             top_tags: stats.top_tags,
@@ -119,9 +127,26 @@ mod commands {
         let ingester = Ingester::new();
         let path = PathBuf::from(path);
 
-        ingester
-            .ingest_file(&path, &db)
-            .map_err(|e| e.to_string())
+        ingester.ingest_file(&path, &db).map_err(|e| e.to_string())
+    }
+
+    #[tauri::command]
+    pub fn import_bookmarks_content(
+        state: State<AppState>,
+        filename: String,
+        content: String,
+    ) -> Result<usize, String> {
+        let extension = PathBuf::from(&filename)
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let ingester = Ingester::new();
+        let bookmarks = ingester
+            .parse_content(&extension, &content)
+            .map_err(|e| e.to_string())?;
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        db.insert_bookmarks(&bookmarks).map_err(|e| e.to_string())
     }
 
     #[tauri::command]
@@ -149,6 +174,7 @@ mod commands {
         db.get_favorites(offset, limit).map_err(|e| e.to_string())
     }
 
+    #[allow(clippy::too_many_arguments)]
     #[tauri::command]
     pub fn search_with_filters(
         state: State<AppState>,
@@ -184,6 +210,69 @@ mod commands {
     }
 
     #[tauri::command]
+    pub fn get_x_sync_status(state: State<AppState>) -> Result<XSyncStatus, String> {
+        let metadata = {
+            let db = state.db.lock().map_err(|e| e.to_string())?;
+            db.get_metadata(metadata_key()).map_err(|e| e.to_string())?
+        };
+        let session = state.x_session.lock().map_err(|e| e.to_string())?;
+        Ok(load_sync_status(metadata, session.as_ref()))
+    }
+
+    #[tauri::command]
+    pub async fn import_bookmarks_from_x(state: State<'_, AppState>) -> Result<XImportSummary, String> {
+        let existing_session = {
+            let session = state.x_session.lock().map_err(|e| e.to_string())?;
+            session.clone()
+        };
+
+        let outcome = match sync_bookmarks_from_x(existing_session).await {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                let db = state.db.lock().map_err(|e| e.to_string())?;
+                let previous = db.get_metadata(metadata_key()).map_err(|e| e.to_string())?;
+                let failed = build_failed_sync_status_from_previous(previous, error.clone());
+                let metadata = serialize_sync_status(&failed)?;
+                db.set_metadata(metadata_key(), &metadata)
+                    .map_err(|e| e.to_string())?;
+                return Err(error);
+            }
+        };
+
+        let total_fetched = outcome.bookmarks.len();
+        let imported_count = {
+            let db = state.db.lock().map_err(|e| e.to_string())?;
+            let imported = db
+                .insert_bookmarks(&outcome.bookmarks)
+                .map_err(|e| e.to_string())?;
+            let summary = XImportSummary {
+                imported_count: imported,
+                skipped_count: total_fetched.saturating_sub(imported),
+                total_fetched,
+                last_synced_at: chrono::Utc::now().to_rfc3339(),
+                reauthenticated: outcome.reauthenticated,
+                status_message: if imported == 0 {
+                    "X import finished, but everything was already in your library.".to_string()
+                } else {
+                    format!("Imported {imported} bookmarks from X into your local library.")
+                },
+            };
+            let persisted = build_success_sync_status(&summary);
+            let metadata = serialize_sync_status(&persisted)?;
+            db.set_metadata(metadata_key(), &metadata)
+                .map_err(|e| e.to_string())?;
+            summary
+        };
+
+        {
+            let mut session = state.x_session.lock().map_err(|e| e.to_string())?;
+            *session = Some(outcome.session);
+        }
+
+        Ok(imported_count)
+    }
+
+    #[tauri::command]
     pub async fn open_url(url: String) -> Result<(), String> {
         open::that(&url).map_err(|e| e.to_string())
     }
@@ -203,7 +292,10 @@ mod commands {
 
         let title = extract_meta(&document, &["og:title", "twitter:title"])
             .or_else(|| extract_title(&document));
-        let description = extract_meta(&document, &["og:description", "twitter:description", "description"]);
+        let description = extract_meta(
+            &document,
+            &["og:description", "twitter:description", "description"],
+        );
         let image_url = extract_meta(&document, &["og:image", "twitter:image"]);
         let site_name = extract_meta(&document, &["og:site_name"]);
 
@@ -248,7 +340,7 @@ mod commands {
         document
             .select(&selector)
             .next()
-            .and_then(|el| Some(el.text().collect::<String>().trim().to_string()))
+            .map(|el| el.text().collect::<String>().trim().to_string())
             .filter(|s| !s.is_empty())
     }
 }
@@ -259,6 +351,7 @@ pub fn run() {
 
     let state = AppState {
         db: Mutex::new(db),
+        x_session: Mutex::new(None),
     };
 
     tauri::Builder::default()
@@ -271,14 +364,16 @@ pub fn run() {
             commands::search_bookmarks,
             commands::get_stats,
             commands::import_file,
+            commands::import_bookmarks_content,
             commands::delete_bookmark,
             commands::toggle_favorite,
             commands::get_favorites,
             commands::search_with_filters,
+            commands::get_x_sync_status,
+            commands::import_bookmarks_from_x,
             commands::open_url,
             commands::fetch_link_preview,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-

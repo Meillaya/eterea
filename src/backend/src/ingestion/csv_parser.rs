@@ -9,7 +9,7 @@ use crate::{Error, Result};
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use csv::ReaderBuilder;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Cursor, Read};
 use std::path::Path;
 use tracing::{debug, warn};
 
@@ -32,6 +32,20 @@ impl CsvFormat {
         
         let headers = reader.headers()?;
         let header_str = headers.iter().collect::<Vec<_>>().join(",").to_lowercase();
+        Self::detect_from_header_str(&header_str)
+    }
+
+    pub fn detect_from_content(content: &str) -> Result<Self> {
+        let mut reader = ReaderBuilder::new()
+            .has_headers(true)
+            .from_reader(Cursor::new(content.as_bytes()));
+
+        let headers = reader.headers()?;
+        let header_str = headers.iter().collect::<Vec<_>>().join(",").to_lowercase();
+        Self::detect_from_header_str(&header_str)
+    }
+
+    fn detect_from_header_str(header_str: &str) -> Result<Self> {
         
         if header_str.contains("tweet date") || header_str.contains("posted by") {
             Ok(CsvFormat::Legacy)
@@ -56,10 +70,18 @@ impl LegacyCsvParser {
     
     pub fn parse(&self, path: &Path) -> Result<Vec<Bookmark>> {
         let file = File::open(path)?;
+        self.parse_reader(BufReader::new(file))
+    }
+
+    pub fn parse_str(&self, content: &str) -> Result<Vec<Bookmark>> {
+        self.parse_reader(Cursor::new(content.as_bytes()))
+    }
+
+    fn parse_reader<R: Read>(&self, reader: R) -> Result<Vec<Bookmark>> {
         let mut reader = ReaderBuilder::new()
             .has_headers(true)
             .flexible(true)
-            .from_reader(BufReader::new(file));
+            .from_reader(reader);
         
         let mut bookmarks = Vec::new();
         
@@ -173,10 +195,18 @@ impl NewCsvParser {
     
     pub fn parse(&self, path: &Path) -> Result<Vec<Bookmark>> {
         let file = File::open(path)?;
+        self.parse_reader(BufReader::new(file))
+    }
+
+    pub fn parse_str(&self, content: &str) -> Result<Vec<Bookmark>> {
+        self.parse_reader(Cursor::new(content.as_bytes()))
+    }
+
+    fn parse_reader<R: Read>(&self, reader: R) -> Result<Vec<Bookmark>> {
         let mut reader = ReaderBuilder::new()
             .has_headers(true)
             .flexible(true)
-            .from_reader(BufReader::new(file));
+            .from_reader(reader);
         
         let mut bookmarks = Vec::new();
         
@@ -281,4 +311,3 @@ mod tests {
         assert_eq!(dt.format("%Y-%m-%d").to_string(), "2025-08-25");
     }
 }
-

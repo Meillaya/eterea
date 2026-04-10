@@ -41,6 +41,12 @@ CREATE TABLE IF NOT EXISTS media (
     FOREIGN KEY (bookmark_id) REFERENCES bookmarks(id) ON DELETE CASCADE
 );
 
+-- App metadata (sync status, feature state, lightweight preferences)
+CREATE TABLE IF NOT EXISTS app_metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 -- FTS5 virtual table for full-text search
 CREATE VIRTUAL TABLE IF NOT EXISTS bookmarks_fts USING fts5(
     content,
@@ -102,4 +108,3 @@ PRAGMA temp_store = MEMORY;
 PRAGMA mmap_size = 268435456;
 PRAGMA foreign_keys = ON;
 "#;
-

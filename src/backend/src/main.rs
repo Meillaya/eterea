@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use eterea_core::{Database, Ingester};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 fn main() -> Result<()> {
@@ -13,7 +13,7 @@ fn main() -> Result<()> {
         .init();
 
     let args: Vec<String> = std::env::args().collect();
-    
+
     if args.len() < 2 {
         print_usage();
         return Ok(());
@@ -56,31 +56,42 @@ fn print_usage() {
     println!("  eterea-cli stats               - Show database statistics");
 }
 
-fn ingest_file(path: &PathBuf) -> Result<()> {
+fn ingest_file(path: &Path) -> Result<()> {
     println!("📥 Ingesting bookmarks from: {}", path.display());
-    
+
     let db = Database::open_default()?;
     let ingester = Ingester::new();
-    
+
     let start = std::time::Instant::now();
     let count = ingester.ingest_file(path, &db)?;
     let elapsed = start.elapsed();
-    
-    println!("✅ Imported {} bookmarks in {:.2}s", count, elapsed.as_secs_f64());
-    println!("⚡ Rate: {:.0} bookmarks/second", count as f64 / elapsed.as_secs_f64());
-    
+
+    println!(
+        "✅ Imported {} bookmarks in {:.2}s",
+        count,
+        elapsed.as_secs_f64()
+    );
+    println!(
+        "⚡ Rate: {:.0} bookmarks/second",
+        count as f64 / elapsed.as_secs_f64()
+    );
+
     Ok(())
 }
 
 fn search_bookmarks(query: &str) -> Result<()> {
     let db = Database::open_default()?;
-    
+
     let start = std::time::Instant::now();
     let results = db.search(query, 20)?;
     let elapsed = start.elapsed();
-    
-    println!("🔍 Found {} results in {:.2}ms\n", results.len(), elapsed.as_secs_f64() * 1000.0);
-    
+
+    println!(
+        "🔍 Found {} results in {:.2}ms\n",
+        results.len(),
+        elapsed.as_secs_f64() * 1000.0
+    );
+
     for bookmark in results {
         println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
         println!("👤 @{} ({})", bookmark.author_handle, bookmark.author_name);
@@ -92,29 +103,35 @@ fn search_bookmarks(query: &str) -> Result<()> {
         println!("🔗 {}", bookmark.tweet_url);
         println!();
     }
-    
+
     Ok(())
 }
 
 fn show_stats() -> Result<()> {
     let db = Database::open_default()?;
     let stats = db.get_stats()?;
-    
+
     println!("📊 Database Statistics");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     println!("Total bookmarks: {}", stats.total_bookmarks);
     println!("Total authors:   {}", stats.unique_authors);
     println!("Total tags:      {}", stats.unique_tags);
-    println!("Date range:      {} to {}", 
-        stats.earliest_date.map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or_default(),
-        stats.latest_date.map(|d| d.format("%Y-%m-%d").to_string()).unwrap_or_default()
+    println!(
+        "Date range:      {} to {}",
+        stats
+            .earliest_date
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_default(),
+        stats
+            .latest_date
+            .map(|d| d.format("%Y-%m-%d").to_string())
+            .unwrap_or_default()
     );
-    
+
     println!("\n🏷️  Top Tags:");
     for (tag, count) in stats.top_tags.iter().take(10) {
         println!("  {}: {}", tag, count);
     }
-    
+
     Ok(())
 }
-

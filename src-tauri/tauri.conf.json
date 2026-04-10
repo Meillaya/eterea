@@ -7,6 +7,7 @@
     "beforeDevCommand": { "script": "bun run dev", "cwd": "../src/frontend" },
     "devUrl": "http://localhost:1420",
     "beforeBuildCommand": { "script": "bun run build", "cwd": "../src/frontend" },
+    "beforeBundleCommand": { "script": "bash scripts/prepare-linuxdeploy.sh", "cwd": ".." },
     "frontendDist": "../src/frontend/build"
   },
   "app": {
@@ -31,7 +32,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "useLocalToolsDir": true,
     "icon": [
+      "icons/icon.png",
       "icons/icon.ico"
     ]
   },

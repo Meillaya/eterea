@@ -6,6 +6,7 @@ use crate::models::{Bookmark, Media, MediaType};
 use crate::{Error, Result};
 use rusqlite::types::Value;
 use rusqlite::{params, params_from_iter, Connection};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 
@@ -259,6 +260,14 @@ impl Database {
         self.hydrate_bookmarks(&mut bookmarks)?;
 
         Ok(bookmarks)
+    }
+
+    /// Count all bookmarks for pagination metadata.
+    pub fn count_bookmarks(&self) -> Result<i64> {
+        let total = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM bookmarks", [], |row| row.get(0))?;
+        Ok(total)
     }
 
     /// Get bookmarks by tag
@@ -538,11 +547,105 @@ impl Database {
     }
 
     fn hydrate_bookmarks(&self, bookmarks: &mut [Bookmark]) -> Result<()> {
+        if bookmarks.is_empty() {
+            return Ok(());
+        }
+
+        let bookmark_ids: Vec<String> = bookmarks
+            .iter()
+            .map(|bookmark| bookmark.id.clone())
+            .collect();
+        let mut tags_by_bookmark = self.load_tags_for_bookmarks(&bookmark_ids)?;
+        let mut media_by_bookmark = self.load_media_for_bookmarks(&bookmark_ids)?;
+
         for bookmark in bookmarks {
-            bookmark.tags = self.load_bookmark_tags(&bookmark.id)?;
-            bookmark.media = self.load_bookmark_media(&bookmark.id)?;
+            bookmark.tags = tags_by_bookmark.remove(&bookmark.id).unwrap_or_default();
+            bookmark.media = media_by_bookmark.remove(&bookmark.id).unwrap_or_default();
         }
         Ok(())
+    }
+
+    fn load_tags_for_bookmarks(
+        &self,
+        bookmark_ids: &[String],
+    ) -> Result<HashMap<String, Vec<String>>> {
+        if bookmark_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let placeholders = Self::sql_placeholders(bookmark_ids.len());
+        let sql = format!(
+            r#"SELECT bt.bookmark_id, t.name
+               FROM bookmark_tags bt
+               JOIN tags t ON t.id = bt.tag_id
+               WHERE bt.bookmark_id IN ({placeholders})
+               ORDER BY bt.bookmark_id, t.name COLLATE NOCASE"#
+        );
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut tags_by_bookmark = HashMap::<String, Vec<String>>::new();
+        let rows = stmt.query_map(params_from_iter(bookmark_ids.iter()), |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?;
+
+        for row in rows {
+            let (bookmark_id, tag) = row?;
+            tags_by_bookmark.entry(bookmark_id).or_default().push(tag);
+        }
+
+        Ok(tags_by_bookmark)
+    }
+
+    fn load_media_for_bookmarks(
+        &self,
+        bookmark_ids: &[String],
+    ) -> Result<HashMap<String, Vec<Media>>> {
+        if bookmark_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let placeholders = Self::sql_placeholders(bookmark_ids.len());
+        let sql = format!(
+            r#"SELECT bookmark_id, url, media_type
+               FROM media
+               WHERE bookmark_id IN ({placeholders})
+               ORDER BY bookmark_id, id"#
+        );
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let mut media_by_bookmark = HashMap::<String, Vec<Media>>::new();
+        let rows = stmt.query_map(params_from_iter(bookmark_ids.iter()), |row| {
+            let media_type = match row.get::<_, String>(2)?.as_str() {
+                "image" => MediaType::Image,
+                "video" => MediaType::Video,
+                "gif" => MediaType::Gif,
+                _ => MediaType::Unknown,
+            };
+
+            Ok((
+                row.get::<_, String>(0)?,
+                Media {
+                    url: row.get(1)?,
+                    media_type,
+                },
+            ))
+        })?;
+
+        for row in rows {
+            let (bookmark_id, media) = row?;
+            media_by_bookmark
+                .entry(bookmark_id)
+                .or_default()
+                .push(media);
+        }
+
+        Ok(media_by_bookmark)
+    }
+
+    fn sql_placeholders(count: usize) -> String {
+        std::iter::repeat_n("?", count)
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// Get all unique tags with counts
@@ -784,5 +887,65 @@ mod tests {
             .search_with_filters(Some("' OR 1=1 --"), None, None, None, None, false, None, 20)
             .unwrap();
         assert!(injection_attempt.is_empty());
+    }
+
+    #[test]
+    fn get_bookmarks_preserves_tags_media_and_total_count() {
+        let db = Database::open_memory().unwrap();
+
+        let mut first = sample_bookmark(
+            "10",
+            "alice",
+            Utc.with_ymd_and_hms(2024, 7, 1, 12, 0, 0).unwrap(),
+            "rust",
+            true,
+        );
+        first.tags.push("sqlite".to_string());
+        first.media.push(Media {
+            url: "https://pbs.twimg.com/media/example.mp4".to_string(),
+            media_type: MediaType::Video,
+        });
+
+        let second = sample_bookmark(
+            "11",
+            "bob",
+            Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap(),
+            "svelte",
+            false,
+        );
+
+        db.insert_bookmarks(&[first.clone(), second.clone()])
+            .unwrap();
+
+        let bookmarks = db.get_bookmarks(0, 10).unwrap();
+
+        assert_eq!(db.count_bookmarks().unwrap(), 2);
+        assert_eq!(bookmarks.len(), 2);
+
+        let hydrated_first = bookmarks
+            .iter()
+            .find(|bookmark| bookmark.id == first.id)
+            .unwrap();
+        assert_eq!(hydrated_first.tags, first.tags);
+        assert_eq!(hydrated_first.media.len(), first.media.len());
+        assert_eq!(
+            hydrated_first
+                .media
+                .iter()
+                .map(|media| (&media.url, &media.media_type))
+                .collect::<Vec<_>>(),
+            first
+                .media
+                .iter()
+                .map(|media| (&media.url, &media.media_type))
+                .collect::<Vec<_>>(),
+        );
+
+        let hydrated_second = bookmarks
+            .iter()
+            .find(|bookmark| bookmark.id == second.id)
+            .unwrap();
+        assert_eq!(hydrated_second.tags, second.tags);
+        assert_eq!(hydrated_second.media.len(), second.media.len());
     }
 }

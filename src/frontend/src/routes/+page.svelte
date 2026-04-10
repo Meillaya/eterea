@@ -15,6 +15,14 @@
   let ready = $state(false);
   let lastSignature = $state('');
 
+  async function refreshStatsInBackground() {
+    try {
+      await loadStats({ throwOnError: true });
+    } catch (error) {
+      console.error('Failed to refresh stats:', error);
+    }
+  }
+
   function filterSignature(): string {
     return JSON.stringify({
       query: searchQuery.value,
@@ -26,14 +34,15 @@
   }
 
   onMount(async () => {
-    await loadStats();
-    ready = true;
     lastSignature = filterSignature();
     await refreshBookmarks();
+    ready = true;
+    void refreshStatsInBackground();
   });
 
   async function refreshVisibleLibrary() {
-    await Promise.all([loadStats(), refreshBookmarks()]);
+    await refreshBookmarks();
+    void refreshStatsInBackground();
   }
 
   $effect(() => {

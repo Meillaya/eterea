@@ -66,9 +66,7 @@ mod commands {
         let limit = limit.unwrap_or(50);
 
         let bookmarks = db.get_bookmarks(offset, limit).map_err(|e| e.to_string())?;
-
-        let stats = db.get_stats().map_err(|e| e.to_string())?;
-        let total = stats.total_bookmarks;
+        let total = db.count_bookmarks().map_err(|e| e.to_string())?;
         let has_more = (offset + bookmarks.len()) < total as usize;
 
         Ok(PaginatedResponse {
@@ -220,7 +218,9 @@ mod commands {
     }
 
     #[tauri::command]
-    pub async fn import_bookmarks_from_x(state: State<'_, AppState>) -> Result<XImportSummary, String> {
+    pub async fn import_bookmarks_from_x(
+        state: State<'_, AppState>,
+    ) -> Result<XImportSummary, String> {
         let existing_session = {
             let session = state.x_session.lock().map_err(|e| e.to_string())?;
             session.clone()

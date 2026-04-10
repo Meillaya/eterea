@@ -83,6 +83,31 @@ type LoadOptions = {
   reset?: boolean;
 };
 
+type LoadStatsOptions = {
+  throwOnError?: boolean;
+  timeoutMs?: number;
+};
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timeoutId);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timeoutId);
+        reject(error);
+      },
+    );
+  });
+}
+
 export async function loadBookmarks(options: LoadOptions = {}): Promise<void> {
   const limit = options.limit ?? feedMeta.value.limit ?? 50;
   const offset = options.reset
@@ -203,10 +228,14 @@ export async function searchBookmarks(
   }
 }
 
-export async function loadStats(): Promise<void> {
+export async function loadStats(options: LoadStatsOptions = {}): Promise<void> {
   try {
     if (isTauri) {
-      const data = await invoke<BookmarkStats>("get_stats");
+      const data = await withTimeout(
+        invoke<BookmarkStats>("get_stats"),
+        options.timeoutMs ?? 10_000,
+        "Stats request timed out. Please retry.",
+      );
       stats.set(data);
       allTags.set(data.top_tags);
     } else {
@@ -215,6 +244,9 @@ export async function loadStats(): Promise<void> {
     }
   } catch (error) {
     console.error("Failed to load stats:", error);
+    if (options.throwOnError) {
+      throw error;
+    }
   }
 }
 

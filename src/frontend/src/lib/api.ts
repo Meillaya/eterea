@@ -85,7 +85,31 @@ type LoadOptions = {
 
 type LoadStatsOptions = {
   suppressErrors?: boolean;
+  throwOnError?: boolean;
+  timeoutMs?: number;
 };
+
+async function withTimeout<T>(
+  task: Promise<T>,
+  timeoutMs: number,
+  message: string,
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(message));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([task, timeoutPromise]);
+  } finally {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
 
 export async function loadBookmarks(options: LoadOptions = {}): Promise<void> {
   const limit = options.limit ?? feedMeta.value.limit ?? 50;
@@ -223,7 +247,7 @@ export async function loadStats(options: LoadStatsOptions = {}): Promise<void> {
     }
   } catch (error) {
     console.error("Failed to load stats:", error);
-    if (!options.suppressErrors) {
+    if (options.throwOnError || !options.suppressErrors) {
       throw error instanceof Error ? error : new Error(String(error));
     }
   }

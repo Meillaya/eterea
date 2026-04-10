@@ -24,9 +24,6 @@
     </div>
 
     <div class="flex items-center gap-2 sm:gap-3">
-      <span class="hidden rounded-full border border-border-subtle bg-bg-secondary/70 px-3 py-2 text-[11px] font-mono uppercase tracking-[0.2em] text-text-muted md:inline-flex">
-        Press / to search
-      </span>
       <a
         href="/settings"
         class="rounded-full border border-transparent px-4 py-2 text-sm text-text-secondary transition-colors hover:border-border hover:bg-bg-secondary/70 hover:text-text-primary"

@@ -155,6 +155,10 @@ target/release/bundle/
 
 ---
 
+## Bookmark load-performance notes
+
+For the active load-path performance and stats-reliability workstream, see [`docs/bookmark-load-performance.md`](docs/bookmark-load-performance.md). It captures the approved scope, review guardrails, and verification checklist for this area.
+
 ## Verification Commands
 
 Current recommended checks:

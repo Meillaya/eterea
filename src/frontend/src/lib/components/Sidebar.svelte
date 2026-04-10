@@ -138,6 +138,9 @@
       <div class="rounded-[1.4rem] border border-border-subtle bg-bg-secondary/55 p-4 text-sm text-text-secondary">
         <p class="font-medium text-text-primary">Reading workspace</p>
         <p class="mt-1">Search fast, import deliberately, keep the archive local.</p>
+        <a href="/settings" class="mt-3 inline-flex text-sm text-accent transition-colors hover:text-text-primary">
+          Tune the workspace →
+        </a>
       </div>
     </div>
   {/if}

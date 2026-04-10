@@ -7,7 +7,7 @@
   import LayoutToggle from '$lib/components/LayoutToggle.svelte';
   import SearchBar from '$lib/components/SearchBar.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
-  import { bookmarks, dateRange, feedMeta, isLoading, isLoadingMore, isRefreshing, searchQuery, selectedTag, stats, viewMode } from '$lib/stores/bookmarks.svelte';
+  import { bookmarks, dateRange, feedMeta, isLoading, isLoadingMore, isRefreshing, layoutMode, searchQuery, selectedTag, viewMode } from '$lib/stores/bookmarks.svelte';
   import { hydrateCachedLibrarySnapshot, loadMoreBookmarks, loadStats, refreshBookmarks } from '$lib/api';
 
   let showImportModal = $state(false);
@@ -16,6 +16,26 @@
   let lastSignature = $state('');
   let lastFocusRefreshAt = $state(0);
   const FOCUS_REFRESH_COOLDOWN_MS = 30_000;
+
+  function showAllBookmarks() {
+    selectedTag.clear();
+    dateRange.clear();
+    viewMode.set('all');
+  }
+
+  function showRecentBookmarks() {
+    selectedTag.clear();
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - 30);
+    dateRange.set(from.toISOString(), to.toISOString());
+    viewMode.set('recent');
+  }
+
+  function showFavoriteBookmarks() {
+    selectedTag.clear();
+    viewMode.set('favorites');
+  }
 
   function filterSignature(): string {
     return JSON.stringify({
@@ -58,6 +78,42 @@
     viewMode.value === 'favorites' ? 1 : 0,
     viewMode.value === 'recent' ? 1 : 0
   ].reduce((total, value) => total + value, 0));
+
+  const mobileNavItems = [
+    { id: 'all', label: 'Library', action: showAllBookmarks },
+    { id: 'recent', label: 'Recent', action: showRecentBookmarks },
+    { id: 'favorites', label: 'Favorites', action: showFavoriteBookmarks }
+  ] as const;
+
+  const activeChips = $derived.by(() => {
+    const chips: string[] = [];
+    if (searchQuery.value) {
+      chips.push(`Search: ${searchQuery.value}`);
+    }
+    if (selectedTag.value) {
+      chips.push(`#${selectedTag.value}`);
+    }
+    if (viewMode.value === 'favorites') {
+      chips.push('Favorites only');
+    }
+    if (viewMode.value === 'recent') {
+      chips.push('Recent 30 days');
+    }
+    if (dateRange.value.from && dateRange.value.to) {
+      const formatOptions: Intl.DateTimeFormatOptions = {
+        month: 'short',
+        day: 'numeric'
+      };
+      chips.push(`${new Date(dateRange.value.from).toLocaleDateString('en-US', formatOptions)} – ${new Date(dateRange.value.to).toLocaleDateString('en-US', formatOptions)}`);
+    }
+    return chips;
+  });
+
+  const layoutSummary = $derived.by(() => {
+    if (layoutMode.value === 'cards') return 'Grid layout';
+    if (layoutMode.value === 'compact') return 'List layout';
+    return 'Focus layout';
+  });
 </script>
 
 <svelte:window onfocus={refreshVisibleLibrary} />
@@ -90,27 +146,27 @@
         </div>
 
         <aside class="panel rounded-[2rem] px-5 py-5">
-          <p class="eyebrow">At a glance</p>
-          {#if stats.value}
-            <div class="mt-4 space-y-3">
-              <div class="rounded-[1.3rem] border border-border-subtle bg-bg-secondary/60 p-4">
-                <p class="text-xs uppercase tracking-wide text-text-muted">Bookmarks</p>
-                <p class="mt-2 text-2xl font-mono text-text-primary">{stats.value.total_bookmarks.toLocaleString()}</p>
-              </div>
-              <div class="grid grid-cols-2 gap-3">
-                <div class="rounded-[1.2rem] border border-border-subtle bg-bg-secondary/60 p-4">
-                  <p class="text-xs uppercase tracking-wide text-text-muted">Favorites</p>
-                  <p class="mt-2 text-lg font-mono text-text-primary">{stats.value.favorite_bookmarks.toLocaleString()}</p>
-                </div>
-                <div class="rounded-[1.2rem] border border-border-subtle bg-bg-secondary/60 p-4">
-                  <p class="text-xs uppercase tracking-wide text-text-muted">Authors</p>
-                  <p class="mt-2 text-lg font-mono text-text-primary">{stats.value.unique_authors.toLocaleString()}</p>
-                </div>
-              </div>
+          <p class="eyebrow">Quick desk</p>
+          <div class="mt-4 space-y-3">
+            <div class="rounded-[1.3rem] border border-border-subtle bg-bg-secondary/60 p-4">
+              <p class="text-xs uppercase tracking-wide text-text-muted">Search</p>
+              <p class="mt-2 text-sm leading-6 text-text-primary">Press <span class="rounded-full border border-border-subtle bg-bg-primary/60 px-2 py-1 font-mono text-[11px] text-text-muted">/</span> from anywhere in the library to jump into search.</p>
             </div>
-          {:else}
-            <div class="mt-4 h-32 rounded-[1.3rem] border border-border-subtle bg-bg-secondary/60"></div>
-          {/if}
+            <div class="rounded-[1.3rem] border border-border-subtle bg-bg-secondary/60 p-4">
+              <p class="text-xs uppercase tracking-wide text-text-muted">Layouts</p>
+              <p class="mt-2 text-sm leading-6 text-text-primary">{layoutSummary} keeps the reading surface clean while preserving multiple layout modes.</p>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <button onclick={() => (showImportModal = true)} class="rounded-[1.2rem] border border-border-subtle bg-bg-secondary/60 p-4 text-left transition-colors hover:border-accent hover:text-accent">
+                <p class="text-xs uppercase tracking-wide text-text-muted">Import</p>
+                <p class="mt-2 text-sm text-text-primary">Bring in new bookmarks</p>
+              </button>
+              <a href="/settings" class="rounded-[1.2rem] border border-border-subtle bg-bg-secondary/60 p-4 transition-colors hover:border-accent hover:text-accent">
+                <p class="text-xs uppercase tracking-wide text-text-muted">Settings</p>
+                <p class="mt-2 text-sm text-text-primary">Tune feed density</p>
+              </a>
+            </div>
+          </div>
         </aside>
       </section>
 
@@ -118,6 +174,19 @@
         <div class="grid gap-4 xl:grid-cols-[minmax(0,1fr),auto] xl:items-center">
           <SearchBar />
           <div class="flex flex-wrap items-center gap-2 justify-start xl:justify-end">
+            <div class="inline-flex rounded-full border border-border bg-bg-secondary/75 p-1 text-xs shadow-[var(--shadow-soft)] lg:hidden">
+              {#each mobileNavItems as item}
+                <button
+                  class="rounded-full px-3 py-1.5 transition-colors"
+                  class:bg-bg-elevated={viewMode.value === item.id}
+                  class:text-text-primary={viewMode.value === item.id}
+                  class:text-text-secondary={viewMode.value !== item.id}
+                  onclick={item.action}
+                >
+                  {item.label}
+                </button>
+              {/each}
+            </div>
             <LayoutToggle />
             <DateFilter />
             {#if viewMode.value === 'favorites'}
@@ -127,6 +196,14 @@
             {/if}
           </div>
         </div>
+
+        {#if activeChips.length > 0}
+          <div class="mt-4 flex flex-wrap gap-2">
+            {#each activeChips as chip}
+              <span class="rounded-full border border-border-subtle bg-bg-secondary/60 px-3 py-1.5 text-xs text-text-secondary">{chip}</span>
+            {/each}
+          </div>
+        {/if}
       </section>
 
       <section class="min-h-0 flex-1">

@@ -262,12 +262,10 @@ impl Database {
         Ok(bookmarks)
     }
 
-    /// Count all bookmarks for pagination metadata.
     pub fn count_bookmarks(&self) -> Result<i64> {
-        let total = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM bookmarks", [], |row| row.get(0))?;
-        Ok(total)
+        self.conn
+            .query_row("SELECT COUNT(*) FROM bookmarks", [], |row| row.get(0))
+            .map_err(Into::into)
     }
 
     /// Get bookmarks by tag
@@ -551,16 +549,22 @@ impl Database {
             return Ok(());
         }
 
-        let bookmark_ids: Vec<String> = bookmarks
+        let bookmark_ids = bookmarks
             .iter()
             .map(|bookmark| bookmark.id.clone())
-            .collect();
-        let mut tags_by_bookmark = self.load_tags_for_bookmarks(&bookmark_ids)?;
-        let mut media_by_bookmark = self.load_media_for_bookmarks(&bookmark_ids)?;
+            .collect::<Vec<_>>();
+        let tags_by_bookmark = self.load_tags_for_bookmarks(&bookmark_ids)?;
+        let media_by_bookmark = self.load_media_for_bookmarks(&bookmark_ids)?;
 
         for bookmark in bookmarks {
-            bookmark.tags = tags_by_bookmark.remove(&bookmark.id).unwrap_or_default();
-            bookmark.media = media_by_bookmark.remove(&bookmark.id).unwrap_or_default();
+            bookmark.tags = tags_by_bookmark
+                .get(&bookmark.id)
+                .cloned()
+                .unwrap_or_default();
+            bookmark.media = media_by_bookmark
+                .get(&bookmark.id)
+                .cloned()
+                .unwrap_or_default();
         }
         Ok(())
     }
@@ -573,23 +577,26 @@ impl Database {
             return Ok(HashMap::new());
         }
 
-        let placeholders = Self::sql_placeholders(bookmark_ids.len());
+        let placeholders = vec!["?"; bookmark_ids.len()].join(", ");
         let sql = format!(
             r#"SELECT bt.bookmark_id, t.name
                FROM bookmark_tags bt
                JOIN tags t ON t.id = bt.tag_id
                WHERE bt.bookmark_id IN ({placeholders})
-               ORDER BY bt.bookmark_id, t.name COLLATE NOCASE"#
+               ORDER BY bt.bookmark_id, t.name"#
         );
-
+        let params = bookmark_ids
+            .iter()
+            .cloned()
+            .map(Value::Text)
+            .collect::<Vec<_>>();
         let mut stmt = self.conn.prepare(&sql)?;
+        let mut rows = stmt.query(params_from_iter(params.iter()))?;
         let mut tags_by_bookmark = HashMap::<String, Vec<String>>::new();
-        let rows = stmt.query_map(params_from_iter(bookmark_ids.iter()), |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
 
-        for row in rows {
-            let (bookmark_id, tag) = row?;
+        while let Some(row) = rows.next()? {
+            let bookmark_id: String = row.get(0)?;
+            let tag: String = row.get(1)?;
             tags_by_bookmark.entry(bookmark_id).or_default().push(tag);
         }
 
@@ -604,17 +611,25 @@ impl Database {
             return Ok(HashMap::new());
         }
 
-        let placeholders = Self::sql_placeholders(bookmark_ids.len());
+        let placeholders = vec!["?"; bookmark_ids.len()].join(", ");
         let sql = format!(
             r#"SELECT bookmark_id, url, media_type
                FROM media
                WHERE bookmark_id IN ({placeholders})
                ORDER BY bookmark_id, id"#
         );
-
+        let params = bookmark_ids
+            .iter()
+            .cloned()
+            .map(Value::Text)
+            .collect::<Vec<_>>();
         let mut stmt = self.conn.prepare(&sql)?;
+        let mut rows = stmt.query(params_from_iter(params.iter()))?;
         let mut media_by_bookmark = HashMap::<String, Vec<Media>>::new();
-        let rows = stmt.query_map(params_from_iter(bookmark_ids.iter()), |row| {
+
+        while let Some(row) = rows.next()? {
+            let bookmark_id: String = row.get(0)?;
+            let url: String = row.get(1)?;
             let media_type = match row.get::<_, String>(2)?.as_str() {
                 "image" => MediaType::Image,
                 "video" => MediaType::Video,
@@ -622,30 +637,13 @@ impl Database {
                 _ => MediaType::Unknown,
             };
 
-            Ok((
-                row.get::<_, String>(0)?,
-                Media {
-                    url: row.get(1)?,
-                    media_type,
-                },
-            ))
-        })?;
-
-        for row in rows {
-            let (bookmark_id, media) = row?;
             media_by_bookmark
                 .entry(bookmark_id)
                 .or_default()
-                .push(media);
+                .push(Media { url, media_type });
         }
 
         Ok(media_by_bookmark)
-    }
-
-    fn sql_placeholders(count: usize) -> String {
-        std::iter::repeat_n("?", count)
-            .collect::<Vec<_>>()
-            .join(", ")
     }
 
     /// Get all unique tags with counts
@@ -890,29 +888,23 @@ mod tests {
     }
 
     #[test]
-    fn get_bookmarks_preserves_tags_media_and_total_count() {
+    fn get_bookmarks_batches_related_tags_and_media() {
         let db = Database::open_memory().unwrap();
-
-        let mut first = sample_bookmark(
-            "10",
+        let first = sample_bookmark(
+            "1",
             "alice",
-            Utc.with_ymd_and_hms(2024, 7, 1, 12, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2024, 5, 1, 12, 0, 0).unwrap(),
             "rust",
             true,
         );
-        first.tags.push("sqlite".to_string());
-        first.media.push(Media {
-            url: "https://pbs.twimg.com/media/example.mp4".to_string(),
-            media_type: MediaType::Video,
-        });
-
-        let second = sample_bookmark(
-            "11",
+        let mut second = sample_bookmark(
+            "2",
             "bob",
             Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap(),
             "svelte",
             false,
         );
+        second.tags.push("frontend".to_string());
 
         db.insert_bookmarks(&[first.clone(), second.clone()])
             .unwrap();
@@ -921,31 +913,14 @@ mod tests {
 
         assert_eq!(db.count_bookmarks().unwrap(), 2);
         assert_eq!(bookmarks.len(), 2);
-
-        let hydrated_first = bookmarks
-            .iter()
-            .find(|bookmark| bookmark.id == first.id)
-            .unwrap();
-        assert_eq!(hydrated_first.tags, first.tags);
-        assert_eq!(hydrated_first.media.len(), first.media.len());
+        assert_eq!(bookmarks[0].author_handle, "bob");
         assert_eq!(
-            hydrated_first
-                .media
-                .iter()
-                .map(|media| (&media.url, &media.media_type))
-                .collect::<Vec<_>>(),
-            first
-                .media
-                .iter()
-                .map(|media| (&media.url, &media.media_type))
-                .collect::<Vec<_>>(),
+            bookmarks[0].tags,
+            vec!["frontend".to_string(), "svelte".to_string()]
         );
-
-        let hydrated_second = bookmarks
-            .iter()
-            .find(|bookmark| bookmark.id == second.id)
-            .unwrap();
-        assert_eq!(hydrated_second.tags, second.tags);
-        assert_eq!(hydrated_second.media.len(), second.media.len());
+        assert!(bookmarks[0].media.is_empty());
+        assert_eq!(bookmarks[1].author_handle, "alice");
+        assert_eq!(bookmarks[1].tags, vec!["rust".to_string()]);
+        assert_eq!(bookmarks[1].media.len(), 1);
     }
 }

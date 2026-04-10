@@ -35,21 +35,21 @@
 
   onMount(async () => {
     lastSignature = filterSignature();
-    await refreshBookmarks();
     ready = true;
-    void refreshStatsInBackground();
+    await refreshBookmarks();
+    void loadStats({ suppressErrors: true });
   });
 
   async function refreshVisibleLibrary() {
     await refreshBookmarks();
-    void refreshStatsInBackground();
+    void loadStats({ suppressErrors: true });
   }
 
   $effect(() => {
     const signature = filterSignature();
     if (!ready || signature === lastSignature) return;
     lastSignature = signature;
-    refreshBookmarks();
+    void refreshBookmarks();
   });
 
   const activeFilterCount = $derived([

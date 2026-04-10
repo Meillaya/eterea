@@ -84,29 +84,8 @@ type LoadOptions = {
 };
 
 type LoadStatsOptions = {
-  throwOnError?: boolean;
-  timeoutMs?: number;
+  suppressErrors?: boolean;
 };
-
-function withTimeout<T>(
-  promise: Promise<T>,
-  timeoutMs: number,
-  timeoutMessage: string,
-): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timeoutId = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
-    promise.then(
-      (value) => {
-        clearTimeout(timeoutId);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timeoutId);
-        reject(error);
-      },
-    );
-  });
-}
 
 export async function loadBookmarks(options: LoadOptions = {}): Promise<void> {
   const limit = options.limit ?? feedMeta.value.limit ?? 50;
@@ -244,8 +223,8 @@ export async function loadStats(options: LoadStatsOptions = {}): Promise<void> {
     }
   } catch (error) {
     console.error("Failed to load stats:", error);
-    if (options.throwOnError) {
-      throw error;
+    if (!options.suppressErrors) {
+      throw error instanceof Error ? error : new Error(String(error));
     }
   }
 }
@@ -253,7 +232,10 @@ export async function loadStats(options: LoadStatsOptions = {}): Promise<void> {
 export async function importFile(path: string): Promise<number> {
   if (isTauri) {
     const count = await invoke<number>("import_file", { path });
-    await Promise.all([loadBookmarks({ reset: true }), loadStats()]);
+    await Promise.all([
+      loadBookmarks({ reset: true }),
+      loadStats({ suppressErrors: true }),
+    ]);
     return count;
   }
 
@@ -268,7 +250,10 @@ export async function importFileContent(file: File): Promise<number> {
       filename: file.name,
       content,
     });
-    await Promise.all([loadBookmarks({ reset: true }), loadStats()]);
+    await Promise.all([
+      loadBookmarks({ reset: true }),
+      loadStats({ suppressErrors: true }),
+    ]);
     return count;
   }
 
@@ -297,7 +282,10 @@ export async function getXSyncStatus(): Promise<XSyncStatus> {
 export async function importBookmarksFromX(): Promise<XImportSummary> {
   if (isTauri) {
     const summary = await invoke<XImportSummary>("import_bookmarks_from_x");
-    await Promise.all([loadBookmarks({ reset: true }), loadStats()]);
+    await Promise.all([
+      loadBookmarks({ reset: true }),
+      loadStats({ suppressErrors: true }),
+    ]);
     return summary;
   }
 
@@ -317,7 +305,7 @@ export async function deleteBookmark(id: string): Promise<void> {
     await invoke("delete_bookmark", { id });
   }
   bookmarks.remove(id);
-  await loadStats();
+  await loadStats({ suppressErrors: true });
 }
 
 export async function openInBrowser(url: string): Promise<void> {

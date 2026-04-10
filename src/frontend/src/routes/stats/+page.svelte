@@ -7,10 +7,9 @@
   let error = $state<string | null>(null);
   let loading = $state(true);
 
-  async function fetchStats() {
+  async function loadPageStats() {
     error = null;
     loading = true;
-
     try {
       await loadStats({ throwOnError: true });
     } catch (e) {
@@ -21,7 +20,7 @@
   }
 
   onMount(() => {
-    void fetchStats();
+    void loadPageStats();
   });
 
   function formatDate(value: string | null) {
@@ -48,7 +47,7 @@
       <div class="panel rounded-[1.8rem] border-red-500/30 p-6 text-center">
         <p class="font-medium text-red-400">Failed to load stats</p>
         <p class="mt-2 text-sm text-text-muted">{error}</p>
-        <button onclick={fetchStats} class="mt-4 rounded-full bg-accent px-4 py-2 text-white">Retry</button>
+        <button onclick={loadPageStats} class="mt-4 rounded-full bg-accent px-4 py-2 text-white">Retry</button>
       </div>
     {:else if loading}
       <div class="panel flex items-center justify-center rounded-[2rem] py-24">

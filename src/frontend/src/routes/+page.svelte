@@ -7,21 +7,15 @@
   import LayoutToggle from '$lib/components/LayoutToggle.svelte';
   import SearchBar from '$lib/components/SearchBar.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
-  import { bookmarks, dateRange, feedMeta, isLoading, searchQuery, selectedTag, stats, viewMode } from '$lib/stores/bookmarks.svelte';
-  import { loadMoreBookmarks, loadStats, refreshBookmarks } from '$lib/api';
+  import { bookmarks, dateRange, feedMeta, isLoading, isLoadingMore, isRefreshing, searchQuery, selectedTag, stats, viewMode } from '$lib/stores/bookmarks.svelte';
+  import { hydrateCachedLibrarySnapshot, loadMoreBookmarks, loadStats, refreshBookmarks } from '$lib/api';
 
   let showImportModal = $state(false);
   let sidebarCollapsed = $state(false);
   let ready = $state(false);
   let lastSignature = $state('');
-
-  async function refreshStatsInBackground() {
-    try {
-      await loadStats({ throwOnError: true });
-    } catch (error) {
-      console.error('Failed to refresh stats:', error);
-    }
-  }
+  let lastFocusRefreshAt = $state(0);
+  const FOCUS_REFRESH_COOLDOWN_MS = 30_000;
 
   function filterSignature(): string {
     return JSON.stringify({
@@ -34,13 +28,18 @@
   }
 
   onMount(async () => {
+    hydrateCachedLibrarySnapshot();
     lastSignature = filterSignature();
     ready = true;
+    lastFocusRefreshAt = Date.now();
     await refreshBookmarks();
     void loadStats({ suppressErrors: true });
   });
 
   async function refreshVisibleLibrary() {
+    const now = Date.now();
+    if (now - lastFocusRefreshAt < FOCUS_REFRESH_COOLDOWN_MS) return;
+    lastFocusRefreshAt = now;
     await refreshBookmarks();
     void loadStats({ suppressErrors: true });
   }
@@ -131,17 +130,22 @@
       </section>
 
       <section class="min-h-0 flex-1">
-        <div class="mb-4 flex items-center justify-between gap-4">
+          <div class="mb-4 flex items-center justify-between gap-4">
           <div>
             <p class="eyebrow">Reading feed</p>
             <h3 class="mt-1 text-xl font-medium text-text-primary">Saved posts</h3>
           </div>
-          {#if feedMeta.value.total > 0}
-            <p class="text-sm text-text-muted">{feedMeta.value.total.toLocaleString()} bookmarks in your archive</p>
-          {/if}
+          <div class="flex items-center gap-3">
+            {#if isRefreshing.value}
+              <span class="rounded-full border border-accent/30 bg-accent/10 px-3 py-1 text-xs font-medium text-accent">Refreshing…</span>
+            {/if}
+            {#if feedMeta.value.total > 0}
+              <p class="text-sm text-text-muted">{feedMeta.value.total.toLocaleString()} bookmarks in your archive</p>
+            {/if}
+          </div>
         </div>
 
-        {#if isLoading.value}
+        {#if isLoading.value && bookmarks.value.length === 0}
           <div class="panel flex h-72 items-center justify-center rounded-[2rem]">
             <div class="h-10 w-10 animate-spin rounded-full border-2 border-accent border-t-transparent"></div>
           </div>
@@ -162,7 +166,13 @@
 
           {#if feedMeta.value.hasMore}
             <div class="py-7 text-center">
-              <button onclick={loadMoreBookmarks} class="rounded-full border border-border bg-bg-secondary/70 px-5 py-2.5 text-sm text-text-primary transition-colors hover:border-accent hover:text-accent">Load more bookmarks</button>
+              <button
+                onclick={loadMoreBookmarks}
+                disabled={isLoadingMore.value}
+                class="rounded-full border border-border bg-bg-secondary/70 px-5 py-2.5 text-sm text-text-primary transition-colors hover:border-accent hover:text-accent disabled:cursor-wait disabled:opacity-70"
+              >
+                {isLoadingMore.value ? 'Loading more…' : 'Load more bookmarks'}
+              </button>
             </div>
           {:else}
             <p class="py-6 text-center text-sm text-text-muted">You’re all caught up.</p>

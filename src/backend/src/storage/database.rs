@@ -10,6 +10,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 
+const STATS_SNAPSHOT_METADATA_KEY: &str = "stats_snapshot_v1";
+
 /// Main database handle
 pub struct Database {
     conn: Connection,
@@ -114,6 +116,7 @@ impl Database {
             }
         }
 
+        self.refresh_stats_snapshot()?;
         conn.execute("COMMIT", [])?;
         Ok(count)
     }
@@ -355,6 +358,9 @@ impl Database {
         let count = self
             .conn
             .execute("DELETE FROM bookmarks WHERE id = ?1", params![id])?;
+        if count > 0 {
+            self.refresh_stats_snapshot()?;
+        }
         Ok(count > 0)
     }
 
@@ -372,6 +378,7 @@ impl Database {
             |row| row.get(0),
         )?;
 
+        self.refresh_stats_snapshot()?;
         Ok(is_favorite)
     }
 
@@ -381,6 +388,7 @@ impl Database {
             "UPDATE bookmarks SET is_favorite = ?2 WHERE id = ?1",
             params![id, favorite as i32],
         )?;
+        self.refresh_stats_snapshot()?;
         Ok(())
     }
 
@@ -668,6 +676,18 @@ impl Database {
 
     /// Get database statistics
     pub fn get_stats(&self) -> Result<BookmarkStats> {
+        if let Some(snapshot) = self.get_metadata(STATS_SNAPSHOT_METADATA_KEY)? {
+            if let Ok(stats) = serde_json::from_str::<BookmarkStats>(&snapshot) {
+                return Ok(stats);
+            }
+        }
+
+        let stats = self.compute_stats()?;
+        self.persist_stats_snapshot(&stats)?;
+        Ok(stats)
+    }
+
+    fn compute_stats(&self) -> Result<BookmarkStats> {
         let total_bookmarks: i64 =
             self.conn
                 .query_row("SELECT COUNT(*) FROM bookmarks", [], |row| row.get(0))?;
@@ -713,6 +733,17 @@ impl Database {
             latest_date: latest_date.map(|ts| chrono::Utc.timestamp_opt(ts, 0).unwrap()),
             top_tags,
         })
+    }
+
+    fn persist_stats_snapshot(&self, stats: &BookmarkStats) -> Result<()> {
+        let payload = serde_json::to_string(stats)
+            .map_err(|error| Error::Other(format!("Failed to serialize stats snapshot: {error}")))?;
+        self.set_metadata(STATS_SNAPSHOT_METADATA_KEY, &payload)
+    }
+
+    fn refresh_stats_snapshot(&self) -> Result<()> {
+        let stats = self.compute_stats()?;
+        self.persist_stats_snapshot(&stats)
     }
 
     /// Convert a database row to a Bookmark
@@ -922,5 +953,40 @@ mod tests {
         assert_eq!(bookmarks[1].author_handle, "alice");
         assert_eq!(bookmarks[1].tags, vec!["rust".to_string()]);
         assert_eq!(bookmarks[1].media.len(), 1);
+    }
+
+    #[test]
+    fn stats_snapshot_stays_fresh_after_writes() {
+        let db = Database::open_memory().unwrap();
+        let first = sample_bookmark(
+            "1",
+            "alice",
+            Utc.with_ymd_and_hms(2024, 5, 1, 12, 0, 0).unwrap(),
+            "rust",
+            false,
+        );
+        let second = sample_bookmark(
+            "2",
+            "bob",
+            Utc.with_ymd_and_hms(2024, 6, 1, 12, 0, 0).unwrap(),
+            "svelte",
+            true,
+        );
+
+        db.insert_bookmarks(&[first.clone(), second.clone()]).unwrap();
+
+        let initial = db.get_stats().unwrap();
+        assert_eq!(initial.total_bookmarks, 2);
+        assert_eq!(initial.favorite_bookmarks, 0);
+
+        db.toggle_favorite(&second.id).unwrap();
+        let after_favorite = db.get_stats().unwrap();
+        assert_eq!(after_favorite.favorite_bookmarks, 1);
+
+        db.delete_bookmark(&first.id).unwrap();
+        let after_delete = db.get_stats().unwrap();
+        assert_eq!(after_delete.total_bookmarks, 1);
+        assert_eq!(after_delete.unique_authors, 1);
+        assert_eq!(after_delete.favorite_bookmarks, 1);
     }
 }

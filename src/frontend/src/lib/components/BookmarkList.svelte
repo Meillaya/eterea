@@ -14,25 +14,25 @@
 {#if layoutMode.value === 'cards'}
   <div class="grid gap-4 md:grid-cols-2">
     {#each items as bookmark (bookmark.id)}
-      <BookmarkCard {bookmark} />
+      <div class="content-auto">
+        <BookmarkCard {bookmark} />
+      </div>
     {/each}
   </div>
 {:else if layoutMode.value === 'compact'}
   <div class="divide-y divide-border-subtle rounded-xl border border-border-subtle bg-bg-secondary">
     {#each items as bookmark (bookmark.id)}
-      <BookmarkRow {bookmark} />
+      <div class="content-auto">
+        <BookmarkRow {bookmark} />
+      </div>
     {/each}
   </div>
 {:else}
   <div class="space-y-4">
-    {#each items as bookmark, index (bookmark.id)}
-      <div 
-        class="animate-slide-up"
-        style="animation-delay: {Math.min(index * 30, 300)}ms"
-      >
+    {#each items as bookmark (bookmark.id)}
+      <div class="content-auto">
         <BookmarkCard {bookmark} />
       </div>
     {/each}
   </div>
 {/if}
-

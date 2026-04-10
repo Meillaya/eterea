@@ -96,7 +96,10 @@
 
 <svelte:window on:click={handleWindowClick} />
 
-<article class="panel animate-slide-up rounded-[1.75rem] p-6 transition-colors hover:border-border-strong">
+<article
+  class="panel bookmark-card rounded-[1.75rem] p-6 transition-colors hover:border-border-strong"
+  style="content-visibility: auto; contain-intrinsic-size: 620px;"
+>
   <div class="mb-5 flex items-start justify-between gap-4">
     <div class="flex min-w-0 items-center gap-3">
       <img

@@ -2,24 +2,30 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { stats } from '$lib/stores/bookmarks.svelte';
-  import { loadStats } from '$lib/api';
+  import { hydrateCachedLibrarySnapshot, loadStats } from '$lib/api';
 
   let error = $state<string | null>(null);
-  let loading = $state(true);
+  let loading = $state(false);
 
   async function loadPageStats() {
     error = null;
-    loading = true;
+    loading = stats.value === null;
     try {
       await loadStats({ throwOnError: true });
     } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+      if (stats.value) {
+        console.error('Failed to refresh stats:', e);
+      } else {
+        error = e instanceof Error ? e.message : String(e);
+      }
     } finally {
       loading = false;
     }
   }
 
   onMount(() => {
+    hydrateCachedLibrarySnapshot();
+    loading = stats.value === null;
     void loadPageStats();
   });
 
@@ -49,11 +55,16 @@
         <p class="mt-2 text-sm text-text-muted">{error}</p>
         <button onclick={loadPageStats} class="mt-4 rounded-full bg-accent px-4 py-2 text-white">Retry</button>
       </div>
-    {:else if loading}
+    {:else if loading && !stats.value}
       <div class="panel flex items-center justify-center rounded-[2rem] py-24">
         <div class="h-10 w-10 animate-spin rounded-full border-2 border-accent border-t-transparent"></div>
       </div>
     {:else if stats.value}
+      {#if loading}
+        <div class="flex justify-end">
+          <span class="rounded-full border border-accent/30 bg-accent/10 px-3 py-1 text-xs font-medium text-accent">Refreshing…</span>
+        </div>
+      {/if}
       <section class="grid gap-4 lg:grid-cols-4">
         <div class="panel rounded-[1.6rem] p-5"><p class="eyebrow">Bookmarks</p><p class="mt-3 text-3xl font-mono">{stats.value.total_bookmarks.toLocaleString()}</p></div>
         <div class="panel rounded-[1.6rem] p-5"><p class="eyebrow">Favorites</p><p class="mt-3 text-3xl font-mono">{(stats.value.favorite_bookmarks ?? 0).toLocaleString()}</p></div>

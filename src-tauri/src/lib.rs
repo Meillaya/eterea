@@ -8,6 +8,7 @@ use eterea_core::{Bookmark, Database, Ingester};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri::State;
 use x_sync::{
     build_failed_sync_status_from_previous, build_success_sync_status,
@@ -52,7 +53,7 @@ pub struct LinkPreview {
 
 mod commands {
     use super::*;
-    use reqwest::redirect::Policy;
+    use reqwest::{header::CONTENT_TYPE, redirect::Policy};
     use scraper::{Html, Selector};
 
     #[tauri::command]
@@ -279,14 +280,46 @@ mod commands {
 
     #[tauri::command]
     pub async fn fetch_link_preview(url: String) -> Result<LinkPreview, String> {
+        const MAX_LINK_PREVIEW_BYTES: u64 = 512 * 1024;
+
         let client = reqwest::Client::builder()
             .user_agent("Eterea/0.1 (+https://github.com/eterea)")
             .redirect(Policy::limited(5))
+            .connect_timeout(Duration::from_millis(800))
+            .timeout(Duration::from_millis(1_500))
             .build()
             .map_err(|e| e.to_string())?;
 
-        let response = client.get(&url).send().await.map_err(|e| e.to_string())?;
+        let response = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?
+            .error_for_status()
+            .map_err(|e| e.to_string())?;
         let final_url = response.url().to_string();
+        let content_type = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+
+        if !content_type.is_empty()
+            && !content_type.starts_with("text/html")
+            && !content_type.starts_with("application/xhtml+xml")
+        {
+            return Err("Link preview only supports HTML pages.".to_string());
+        }
+
+        if response
+            .content_length()
+            .map(|length| length > MAX_LINK_PREVIEW_BYTES)
+            .unwrap_or(false)
+        {
+            return Err("Link preview content too large.".to_string());
+        }
+
         let body = response.text().await.map_err(|e| e.to_string())?;
         let document = Html::parse_document(&body);
 

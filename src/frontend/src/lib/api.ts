@@ -10,11 +10,14 @@ import type {
   XSyncStatus,
 } from "./types";
 import {
+  DEFAULT_FEED_LIMIT,
   allTags,
   bookmarks,
   dateRange,
   feedMeta,
   isLoading,
+  isLoadingMore,
+  isRefreshing,
   searchQuery,
   selectedTag,
   stats,
@@ -77,6 +80,134 @@ const mockStats: BookmarkStats = {
   ],
 };
 
+type LibrarySnapshot = {
+  version: 1;
+  items: Bookmark[];
+  feedMeta: PaginatedResponse<Bookmark>;
+  cachedAt: number;
+};
+
+type StatsSnapshot = {
+  version: 1;
+  stats: BookmarkStats;
+  cachedAt: number;
+};
+
+const LIBRARY_SNAPSHOT_KEY = "eterea:library-snapshot";
+const STATS_SNAPSHOT_KEY = "eterea:stats-snapshot";
+const DEFAULT_STATS_TIMEOUT_MS = 2_000;
+const LINK_PREVIEW_TIMEOUT_MS = 1_500;
+const LINK_PREVIEW_CONCURRENCY = 4;
+
+let activeBookmarkRequestKey: string | null = null;
+let activeBookmarkRequest: Promise<void> | null = null;
+let activeStatsRequest: Promise<void> | null = null;
+let primaryLoadDepth = 0;
+let backgroundLoadDepth = 0;
+let activePreviewRequests = 0;
+const previewQueue: Array<() => void> = [];
+
+function beginPrimaryLoad(): "blocking" | "background" {
+  const mode = bookmarks.value.length > 0 ? "background" : "blocking";
+  if (mode === "background") {
+    backgroundLoadDepth += 1;
+    isRefreshing.set(true);
+  } else {
+    primaryLoadDepth += 1;
+    isLoading.set(true);
+  }
+  return mode;
+}
+
+function endPrimaryLoad(mode: "blocking" | "background") {
+  if (mode === "background") {
+    backgroundLoadDepth = Math.max(0, backgroundLoadDepth - 1);
+    isRefreshing.set(backgroundLoadDepth > 0);
+    return;
+  }
+
+  primaryLoadDepth = Math.max(0, primaryLoadDepth - 1);
+  isLoading.set(primaryLoadDepth > 0);
+}
+
+function readSnapshot<T>(key: string): T | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch (error) {
+    console.warn(`Failed to read cache snapshot for ${key}:`, error);
+    return null;
+  }
+}
+
+function writeSnapshot(key: string, value: unknown) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.warn(`Failed to persist cache snapshot for ${key}:`, error);
+  }
+}
+
+function clearSnapshot(key: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.removeItem(key);
+}
+
+function persistLibrarySnapshot(response: PaginatedResponse<Bookmark>) {
+  if (response.offset !== 0) {
+    return;
+  }
+
+  writeSnapshot(LIBRARY_SNAPSHOT_KEY, {
+    version: 1,
+    items: response.items,
+    feedMeta: response,
+    cachedAt: Date.now(),
+  } satisfies LibrarySnapshot);
+}
+
+function persistStatsSnapshot(data: BookmarkStats) {
+  writeSnapshot(STATS_SNAPSHOT_KEY, {
+    version: 1,
+    stats: data,
+    cachedAt: Date.now(),
+  } satisfies StatsSnapshot);
+}
+
+export function hydrateCachedLibrarySnapshot() {
+  const librarySnapshot = readSnapshot<LibrarySnapshot>(LIBRARY_SNAPSHOT_KEY);
+  if (
+    librarySnapshot?.version === 1 &&
+    bookmarks.value.length === 0 &&
+    librarySnapshot.items.length > 0
+  ) {
+    bookmarks.set(librarySnapshot.items);
+    feedMeta.set({
+      offset: librarySnapshot.feedMeta.offset + librarySnapshot.feedMeta.items.length,
+      limit: librarySnapshot.feedMeta.limit,
+      total: librarySnapshot.feedMeta.total,
+      hasMore: librarySnapshot.feedMeta.has_more,
+    });
+  }
+
+  const statsSnapshot = readSnapshot<StatsSnapshot>(STATS_SNAPSHOT_KEY);
+  if (statsSnapshot?.version === 1 && !stats.value) {
+    stats.set(statsSnapshot.stats);
+    allTags.set(statsSnapshot.stats.top_tags);
+  }
+}
+
 type LoadOptions = {
   offset?: number;
   limit?: number;
@@ -112,77 +243,113 @@ async function withTimeout<T>(
 }
 
 export async function loadBookmarks(options: LoadOptions = {}): Promise<void> {
-  const limit = options.limit ?? feedMeta.value.limit ?? 50;
+  const limit = options.limit ?? feedMeta.value.limit ?? DEFAULT_FEED_LIMIT;
   const offset = options.reset
     ? 0
     : (options.offset ?? feedMeta.value.offset ?? 0);
-  if (options.reset) {
-    bookmarks.clear();
-    feedMeta.reset(limit);
+  const requestKey = JSON.stringify({ offset, limit });
+  if (activeBookmarkRequest && activeBookmarkRequestKey === requestKey) {
+    return activeBookmarkRequest;
   }
 
-  if (offset === 0) {
-    isLoading.set(true);
-  }
+  const loadMode = offset === 0 ? beginPrimaryLoad() : null;
+  const hadItemsBeforeRequest = bookmarks.value.length > 0;
 
-  try {
-    if (isTauri) {
-      const response = await invoke<PaginatedResponse<Bookmark>>(
-        "get_bookmarks",
-        { offset, limit },
-      );
-      if (offset === 0) {
-        bookmarks.set(response.items);
+  let request!: Promise<void>;
+  request = (async () => {
+    try {
+      if (isTauri) {
+        const response = await invoke<PaginatedResponse<Bookmark>>(
+          "get_bookmarks",
+          { offset, limit },
+        );
+        if (offset === 0) {
+          bookmarks.set(response.items);
+          feedMeta.set({
+            offset: response.offset + response.items.length,
+            limit: response.limit,
+            total: response.total,
+            hasMore: response.has_more,
+          });
+          persistLibrarySnapshot(response);
+        } else {
+          bookmarks.append(response.items);
+          feedMeta.update({
+            offset: offset + response.items.length,
+            limit,
+            total: response.total,
+            hasMore: response.has_more,
+          });
+        }
       } else {
-        bookmarks.append(response.items);
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        if (offset === 0) {
+          bookmarks.set(mockBookmarks);
+          feedMeta.set({
+            offset: mockBookmarks.length,
+            limit,
+            total: mockBookmarks.length,
+            hasMore: false,
+          });
+          persistLibrarySnapshot({
+            items: mockBookmarks,
+            total: mockBookmarks.length,
+            offset: 0,
+            limit,
+            has_more: false,
+          });
+        } else {
+          bookmarks.append(mockBookmarks);
+          feedMeta.update({
+            offset: offset + mockBookmarks.length,
+            limit,
+            total: mockBookmarks.length,
+            hasMore: false,
+          });
+        }
       }
-      feedMeta.update({
-        offset: offset + response.items.length,
-        limit,
-        total: response.total,
-        hasMore: response.has_more,
-      });
-    } else {
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      if (offset === 0) {
-        bookmarks.set(mockBookmarks);
-      } else {
-        bookmarks.append(mockBookmarks);
+    } catch (error) {
+      console.error("Failed to load bookmarks:", error);
+      if (offset === 0 && !hadItemsBeforeRequest) {
+        bookmarks.set([]);
+        feedMeta.reset(limit);
       }
-      feedMeta.update({
-        offset: offset + mockBookmarks.length,
-        limit,
-        total: mockBookmarks.length,
-        hasMore: false,
-      });
+    } finally {
+      if (loadMode) {
+        endPrimaryLoad(loadMode);
+      }
+      if (activeBookmarkRequestKey === requestKey) {
+        activeBookmarkRequest = null;
+        activeBookmarkRequestKey = null;
+      }
     }
-  } catch (error) {
-    console.error("Failed to load bookmarks:", error);
-    if (offset === 0) {
-      bookmarks.set([]);
-    }
-  } finally {
-    if (offset === 0) {
-      isLoading.set(false);
-    }
-  }
+  })();
+
+  activeBookmarkRequestKey = requestKey;
+  activeBookmarkRequest = request;
+  return request;
 }
 
 export async function loadMoreBookmarks(): Promise<void> {
-  if (!feedMeta.value.hasMore || isLoading.value) {
+  if (!feedMeta.value.hasMore || isLoading.value || isLoadingMore.value) {
     return;
   }
-  await loadBookmarks({
-    offset: feedMeta.value.offset,
-    limit: feedMeta.value.limit,
-  });
+  isLoadingMore.set(true);
+  try {
+    await loadBookmarks({
+      offset: feedMeta.value.offset,
+      limit: feedMeta.value.limit,
+    });
+  } finally {
+    isLoadingMore.set(false);
+  }
 }
 
 export async function searchBookmarks(
   query: string,
   tag?: string | null,
 ): Promise<void> {
-  isLoading.set(true);
+  const loadMode = beginPrimaryLoad();
 
   try {
     if (isTauri) {
@@ -227,30 +394,44 @@ export async function searchBookmarks(
   } catch (error) {
     console.error("Search failed:", error);
   } finally {
-    isLoading.set(false);
+    endPrimaryLoad(loadMode);
   }
 }
 
 export async function loadStats(options: LoadStatsOptions = {}): Promise<void> {
+  if (activeStatsRequest) {
+    return activeStatsRequest;
+  }
+
+  let request!: Promise<void>;
+  request = (async () => {
   try {
     if (isTauri) {
       const data = await withTimeout(
         invoke<BookmarkStats>("get_stats"),
-        options.timeoutMs ?? 10_000,
+        options.timeoutMs ?? DEFAULT_STATS_TIMEOUT_MS,
         "Stats request timed out. Please retry.",
       );
       stats.set(data);
       allTags.set(data.top_tags);
+      persistStatsSnapshot(data);
     } else {
       stats.set(mockStats);
       allTags.set(mockStats.top_tags);
+      persistStatsSnapshot(mockStats);
     }
   } catch (error) {
     console.error("Failed to load stats:", error);
     if (options.throwOnError || !options.suppressErrors) {
       throw error instanceof Error ? error : new Error(String(error));
     }
+  } finally {
+    activeStatsRequest = null;
   }
+  })();
+
+  activeStatsRequest = request;
+  return request;
 }
 
 export async function importFile(path: string): Promise<number> {
@@ -329,6 +510,7 @@ export async function deleteBookmark(id: string): Promise<void> {
     await invoke("delete_bookmark", { id });
   }
   bookmarks.remove(id);
+  clearSnapshot(LIBRARY_SNAPSHOT_KEY);
   await loadStats({ suppressErrors: true });
 }
 
@@ -348,6 +530,7 @@ export async function toggleFavorite(id: string): Promise<boolean> {
     if (index !== -1) {
       items[index].is_favorite = newStatus;
       bookmarks.set([...items]);
+      clearSnapshot(LIBRARY_SNAPSHOT_KEY);
       if (stats.value) {
         stats.set({
           ...stats.value,
@@ -366,6 +549,7 @@ export async function toggleFavorite(id: string): Promise<boolean> {
   if (index !== -1) {
     items[index].is_favorite = !items[index].is_favorite;
     bookmarks.set([...items]);
+    clearSnapshot(LIBRARY_SNAPSHOT_KEY);
     if (stats.value) {
       stats.set({
         ...stats.value,
@@ -381,7 +565,7 @@ export async function toggleFavorite(id: string): Promise<boolean> {
 }
 
 export async function loadFavorites(): Promise<void> {
-  isLoading.set(true);
+  const loadMode = beginPrimaryLoad();
 
   try {
     if (isTauri) {
@@ -411,7 +595,7 @@ export async function loadFavorites(): Promise<void> {
   } catch (error) {
     console.error("Failed to load favorites:", error);
   } finally {
-    isLoading.set(false);
+    endPrimaryLoad(loadMode);
   }
 }
 
@@ -424,7 +608,7 @@ export async function searchWithFilters(filters: {
   favoritesOnly?: boolean;
   hasMedia?: boolean;
 }): Promise<void> {
-  isLoading.set(true);
+  const loadMode = beginPrimaryLoad();
 
   try {
     if (isTauri) {
@@ -493,11 +677,25 @@ export async function searchWithFilters(filters: {
   } catch (error) {
     console.error("Search with filters failed:", error);
   } finally {
-    isLoading.set(false);
+    endPrimaryLoad(loadMode);
   }
 }
 
 const previewCache = new Map<string, Promise<LinkPreview | null>>();
+
+async function withPreviewSlot<T>(task: () => Promise<T>): Promise<T> {
+  if (activePreviewRequests >= LINK_PREVIEW_CONCURRENCY) {
+    await new Promise<void>((resolve) => previewQueue.push(resolve));
+  }
+
+  activePreviewRequests += 1;
+  try {
+    return await task();
+  } finally {
+    activePreviewRequests = Math.max(0, activePreviewRequests - 1);
+    previewQueue.shift()?.();
+  }
+}
 
 export function fetchLinkPreview(url: string): Promise<LinkPreview | null> {
   if (previewCache.has(url)) {
@@ -507,11 +705,17 @@ export function fetchLinkPreview(url: string): Promise<LinkPreview | null> {
   const task = (async () => {
     try {
       if (isTauri) {
-        return await invoke<LinkPreview>("fetch_link_preview", { url });
+        return await withPreviewSlot(() =>
+          withTimeout(
+            invoke<LinkPreview>("fetch_link_preview", { url }),
+            LINK_PREVIEW_TIMEOUT_MS,
+            "Link preview timed out.",
+          ),
+        );
       }
       return null;
     } catch (error) {
-      console.error("Failed to fetch link preview:", error);
+      console.debug("Link preview unavailable:", error);
       return null;
     }
   })();

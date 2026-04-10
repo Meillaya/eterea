@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { layoutMode, feedMeta } from '$lib/stores/bookmarks.svelte';
+  import { DEFAULT_FEED_LIMIT, layoutMode, feedMeta } from '$lib/stores/bookmarks.svelte';
   import { loadBookmarks } from '$lib/api';
   import { goto } from '$app/navigation';
 
-  let limit = $state(feedMeta.value.limit ?? 50);
+  let limit = $state(feedMeta.value.limit ?? DEFAULT_FEED_LIMIT);
 
   async function saveLimit() {
     feedMeta.reset(limit);

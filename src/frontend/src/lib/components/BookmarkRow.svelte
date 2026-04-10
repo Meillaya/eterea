@@ -10,7 +10,10 @@
   let { bookmark }: Props = $props();
 </script>
 
-<div class="flex items-center justify-between gap-4 px-4 py-4 transition-colors hover:bg-bg-secondary/55">
+<div
+  class="flex items-center justify-between gap-4 px-4 py-4 transition-colors hover:bg-bg-secondary/55"
+  style="content-visibility: auto; contain-intrinsic-size: 120px;"
+>
   <div class="min-w-0 flex-1">
     <button class="w-full text-left" onclick={() => openInBrowser(bookmark.tweet_url)}>
       <p class="truncate text-sm font-medium text-text-primary">{bookmark.content}</p>

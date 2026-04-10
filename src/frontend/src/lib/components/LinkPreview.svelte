@@ -8,39 +8,83 @@
   }
 
   let { url }: Props = $props();
+  let container: HTMLDivElement | undefined;
   let preview = $state<LinkPreview | null>(null);
-  let loading = $state(true);
   let failed = $state(false);
+  let hasStarted = false;
 
-  onMount(async () => {
+  async function loadPreview() {
+    if (hasStarted) return;
+    hasStarted = true;
+
     try {
       preview = await fetchLinkPreview(url);
       failed = preview === null;
-    } finally {
-      loading = false;
+    } catch {
+      failed = true;
     }
+  }
+
+  onMount(() => {
+    if (typeof IntersectionObserver === 'undefined' || !container) {
+      void loadPreview();
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        observer.disconnect();
+        void loadPreview();
+      },
+      { rootMargin: '320px 0px' }
+    );
+
+    observer.observe(container);
+
+    return () => observer.disconnect();
   });
 </script>
 
-{#if loading}
-  <div class="rounded-[1.2rem] border border-border-subtle bg-bg-secondary/55 p-4 text-sm text-text-muted animate-pulse">Loading preview…</div>
-{:else if preview}
-  <button class="overflow-hidden rounded-[1.3rem] border border-border bg-bg-secondary/60 text-left transition-colors hover:border-border-strong" onclick={() => openInBrowser(preview?.final_url || url)}>
-    <div class="grid gap-0 md:grid-cols-[180px,1fr]">
-      {#if preview.image_url}
-        <img src={preview.image_url} alt={preview.title ?? preview.final_url} class="h-full min-h-32 w-full object-cover" loading="lazy" />
-      {/if}
-      <div class="space-y-2 p-4">
-        {#if preview.site_name}
-          <p class="eyebrow">{preview.site_name}</p>
+<div bind:this={container}>
+  {#if preview}
+    <button
+      class="overflow-hidden rounded-[1.3rem] border border-border bg-bg-secondary/60 text-left transition-colors hover:border-border-strong"
+      onclick={() => openInBrowser(preview?.final_url || url)}
+    >
+      <div class="grid gap-0 md:grid-cols-[180px,1fr]">
+        {#if preview.image_url}
+          <img
+            src={preview.image_url}
+            alt={preview.title ?? preview.final_url}
+            class="h-full min-h-32 w-full object-cover"
+            loading="lazy"
+          />
         {/if}
-        <p class="text-sm font-medium text-text-primary">{preview.title ?? preview.final_url}</p>
-        {#if preview.description}
-          <p class="line-clamp-3 text-sm text-text-secondary">{preview.description}</p>
-        {/if}
+        <div class="space-y-2 p-4">
+          {#if preview.site_name}
+            <p class="eyebrow">{preview.site_name}</p>
+          {/if}
+          <p class="text-sm font-medium text-text-primary">
+            {preview.title ?? preview.final_url}
+          </p>
+          {#if preview.description}
+            <p class="line-clamp-3 text-sm text-text-secondary">
+              {preview.description}
+            </p>
+          {/if}
+        </div>
       </div>
-    </div>
-  </button>
-{:else if failed}
-  <a href={url} class="text-sm text-accent underline" target="_blank" rel="noreferrer">{url}</a>
-{/if}
+    </button>
+  {:else}
+    <a
+      href={url}
+      class="flex items-center gap-2 rounded-[1.1rem] border border-border-subtle bg-bg-secondary/45 px-3 py-2 text-sm text-text-secondary transition-colors hover:border-border hover:text-accent"
+      target="_blank"
+      rel="noreferrer"
+    >
+      <span class="truncate">{failed ? url : 'Open linked article'}</span>
+      <span aria-hidden="true">↗</span>
+    </a>
+  {/if}
+</div>

@@ -43,6 +43,18 @@ The goal is deliberately narrow:
 
 Never reintroduce an unbounded spinner state.
 
+### 5. Cached local data should paint before background refresh
+
+The app now persists a local snapshot of the first bookmark page and recent stats so the library can paint immediately on startup, then refresh in the background.
+
+**Guardrail:** keep snapshot hydration lightweight and preserve visible content while revalidating in the background. Do not regress to blank-screen-first loading when cached local data exists.
+
+### 6. Link previews are strictly best-effort
+
+Bookmark cards can reference many external links, so preview fetching must never become the bottleneck for showing the library itself.
+
+**Guardrail:** keep link previews lazy, concurrency-limited, and timeout-bounded. A plain link fallback is preferable to a long or unbounded preview loader.
+
 ## Expected behavior after the performance work
 
 When this work is complete, maintainers should be able to rely on the following behavior:
@@ -52,6 +64,8 @@ When this work is complete, maintainers should be able to rely on the following 
 3. Pagination metadata does not require a full stats refresh.
 4. Stats loading failures degrade to a terminal error state instead of an infinite loader.
 5. Search, filters, favorites, and refresh continue to behave correctly after the faster load path lands.
+6. Cached content paints immediately when available, while refresh happens unobtrusively in the background.
+7. Link previews enhance visible cards without delaying first paint or hanging indefinitely.
 
 ## Verification checklist
 

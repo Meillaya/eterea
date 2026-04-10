@@ -2,6 +2,9 @@
 
 import type { Bookmark, BookmarkStats } from '$lib/types';
 
+export const DEFAULT_FEED_LIMIT = 20;
+const FEED_LIMIT_STORAGE_KEY = 'eterea:feed-limit';
+
 // Bookmarks list
 function createBookmarksStore() {
   let items = $state<Bookmark[]>([]);
@@ -95,6 +98,8 @@ export const bookmarks = createBookmarksStore();
 export const searchQuery = createSearchStore();
 export const selectedTag = createTagStore();
 export const isLoading = createLoadingStore();
+export const isRefreshing = createLoadingStore();
+export const isLoadingMore = createLoadingStore();
 export const stats = createStatsStore();
 export const allTags = createTagsStore();
 export const viewMode = createViewModeStore();
@@ -132,21 +137,45 @@ type FeedState = {
   hasMore: boolean;
 };
 
+function resolveInitialFeedLimit(): number {
+  if (typeof window === 'undefined') return DEFAULT_FEED_LIMIT;
+  const stored = Number.parseInt(
+    window.localStorage.getItem(FEED_LIMIT_STORAGE_KEY) ?? '',
+    10,
+  );
+  if (Number.isFinite(stored) && stored >= 10 && stored <= 200) {
+    return stored;
+  }
+  return DEFAULT_FEED_LIMIT;
+}
+
+function persistFeedLimit(limit: number) {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(FEED_LIMIT_STORAGE_KEY, String(limit));
+}
+
 function createFeedMetaStore() {
   let state = $state<FeedState>({
     offset: 0,
-    limit: 50,
+    limit: resolveInitialFeedLimit(),
     total: 0,
     hasMore: true
   });
   
   return {
     get value() { return state; },
-    reset(limit = 50) {
+    set(newState: FeedState) {
+      persistFeedLimit(newState.limit);
+      state = newState;
+    },
+    reset(limit = DEFAULT_FEED_LIMIT) {
+      persistFeedLimit(limit);
       state = { offset: 0, limit, total: 0, hasMore: true };
     },
     update(partial: Partial<FeedState>) {
-      state = { ...state, ...partial };
+      const next = { ...state, ...partial };
+      persistFeedLimit(next.limit);
+      state = next;
     }
   };
 }
@@ -154,4 +183,4 @@ function createFeedMetaStore() {
 export const dateRange = createDateRangeStore();
 export const layoutMode = createLayoutStore();
 export const feedMeta = createFeedMetaStore();
-
+export type { FeedState };

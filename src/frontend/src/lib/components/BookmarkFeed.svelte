@@ -1,5 +1,6 @@
 <script lang="ts">
   import { deleteBookmark, openInBrowser, toggleFavorite } from '$lib/api';
+  import LinkPreview from '$lib/components/LinkPreview.svelte';
   import { selectedTag } from '$lib/stores/bookmarks.svelte';
   import { layoutMode } from '$lib/stores/bookmarks.svelte';
   import type { Bookmark } from '$lib/types';
@@ -9,6 +10,7 @@
   }
 
   let { items }: Props = $props();
+  const urlRegex = /(https?:\/\/[^\s]+)/g;
 
   function formatDate(value: string): string {
     const date = new Date(value);
@@ -91,10 +93,21 @@
 
     return 'inline-flex items-center rounded-full border border-border-subtle bg-bg-primary/30 px-2.5 py-1 text-[11px] text-text-muted';
   }
+
+  function extractedLinks(bookmark: Bookmark): string[] {
+    return Array.from(
+      new Set(
+        (bookmark.content.match(urlRegex) ?? [])
+          .map((url) => url.replace(/[,.!?]+$/, ''))
+          .filter((url) => url !== bookmark.tweet_url),
+      ),
+    ).slice(0, layoutMode.value === 'list' ? 2 : 1);
+  }
 </script>
 
 <div class={containerClass()}>
   {#each items as bookmark (bookmark.id)}
+    {@const links = extractedLinks(bookmark)}
     <article class={articleClass()}>
       <div class="flex flex-wrap items-start justify-between gap-3">
         <div class="min-w-0 flex flex-1 items-start gap-3">
@@ -149,6 +162,13 @@
           </div>
         {/if}
 
+        {#if bookmark.comments}
+          <div class="rounded-[1rem] border border-border-subtle bg-bg-secondary/35 px-4 py-3">
+            <p class="section-label">Comment</p>
+            <p class="mt-2 text-sm leading-6 text-text-secondary">{bookmark.comments}</p>
+          </div>
+        {/if}
+
         {#if bookmark.media?.length}
           <div class="rounded-[1rem] border border-border-subtle bg-bg-primary/20 px-4 py-3">
             <div class="flex flex-wrap items-center justify-between gap-2">
@@ -165,6 +185,24 @@
           </div>
         {/if}
 
+        {#if links.length > 0}
+          {#if layoutMode.value === 'list'}
+            <div class="flex flex-wrap gap-2">
+              {#each links as url}
+                <button class="pill max-w-full transition-colors hover:border-border-accent hover:text-accent" onclick={() => openInBrowser(url)}>
+                  <span class="truncate">{url}</span>
+                </button>
+              {/each}
+            </div>
+          {:else}
+            <div class="space-y-3">
+              {#each links as url}
+                <LinkPreview {url} />
+              {/each}
+            </div>
+          {/if}
+        {/if}
+
         {#if bookmark.tags?.length}
           <div class="flex flex-wrap gap-2">
             {#each bookmark.tags as tag}
@@ -176,7 +214,14 @@
         {/if}
 
         <div class="flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle pt-3 text-xs text-text-muted">
-          <span class={metaPillClass()}>{bookmark.id.slice(0, 8)}</span>
+          <div class="flex flex-wrap items-center gap-2">
+            <span class={metaPillClass()}>{bookmark.id.slice(0, 8)}</span>
+            {#if bookmark.author_profile_url}
+              <button class="text-text-muted transition-colors hover:text-accent" onclick={() => openInBrowser(bookmark.author_profile_url!)}>
+                Author profile
+              </button>
+            {/if}
+          </div>
           <button class="text-text-muted transition-colors hover:text-accent" onclick={() => openInBrowser(bookmark.tweet_url)}>
             Open original →
           </button>

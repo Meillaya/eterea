@@ -68,10 +68,14 @@
 
   function articleClass() {
     if (layoutMode.value === 'list') {
-      return 'surface-panel rounded-[1.4rem] p-4';
+      return 'surface-panel rounded-[1.35rem] p-4';
     }
 
-    return 'surface-panel rounded-[1.8rem] p-5';
+    if (layoutMode.value === 'grid') {
+      return 'surface-panel rounded-[1.7rem] p-5';
+    }
+
+    return 'surface-panel rounded-[2rem] p-6';
   }
 
   function copyClass() {
@@ -102,6 +106,33 @@
           .filter((url) => url !== bookmark.tweet_url),
       ),
     ).slice(0, layoutMode.value === 'list' ? 2 : 1);
+  }
+
+  function chromeClass() {
+    if (layoutMode.value === 'list') {
+      return 'flex flex-wrap gap-2';
+    }
+
+    return 'flex flex-wrap gap-2';
+  }
+
+  function contentStackClass() {
+    if (layoutMode.value === 'grid') {
+      return 'mt-4 space-y-4';
+    }
+
+    return 'mt-4 space-y-3';
+  }
+
+  function contentPanelClass(kind: 'note' | 'comment' | 'media') {
+    const base = 'rounded-[1rem] border px-4 py-3';
+    if (kind === 'note') {
+      return `${base} border-border-subtle bg-bg-primary/25`;
+    }
+    if (kind === 'comment') {
+      return `${base} border-border-subtle bg-bg-secondary/35`;
+    }
+    return `${base} border-border-subtle bg-bg-primary/20`;
   }
 </script>
 
@@ -137,7 +168,7 @@
           </div>
         </div>
 
-        <div class="flex flex-wrap gap-2">
+        <div class={chromeClass()}>
           <button class="ghost-button px-3 py-2 text-sm" onclick={() => toggleFavorite(bookmark.id)}>
             {bookmark.is_favorite ? '★ Favorite' : '☆ Favorite'}
           </button>
@@ -150,27 +181,27 @@
         </div>
       </div>
 
-      <div class="mt-4 space-y-3">
+      <div class={contentStackClass()}>
         <p class={`whitespace-pre-wrap break-words text-text-primary ${copyClass()}`}>
           {bookmark.content || '(no text content)'}
         </p>
 
         {#if bookmark.note_text}
-          <div class="rounded-[1rem] border border-border-subtle bg-bg-primary/25 px-4 py-3">
+          <div class={contentPanelClass('note')}>
             <p class="section-label">Note</p>
             <p class="mt-2 text-sm leading-6 text-text-secondary">{bookmark.note_text}</p>
           </div>
         {/if}
 
         {#if bookmark.comments}
-          <div class="rounded-[1rem] border border-border-subtle bg-bg-secondary/35 px-4 py-3">
+          <div class={contentPanelClass('comment')}>
             <p class="section-label">Comment</p>
             <p class="mt-2 text-sm leading-6 text-text-secondary">{bookmark.comments}</p>
           </div>
         {/if}
 
         {#if bookmark.media?.length}
-          <div class="rounded-[1rem] border border-border-subtle bg-bg-primary/20 px-4 py-3">
+          <div class={contentPanelClass('media')}>
             <div class="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <p class="section-label">Media attached</p>
@@ -178,9 +209,14 @@
                   {bookmark.media.length} item{bookmark.media.length === 1 ? '' : 's'} available for this bookmark.
                 </p>
               </div>
-              <button class="ghost-button px-3 py-2 text-sm" onclick={() => openInBrowser(bookmark.tweet_url)}>
-                Open media on X
-              </button>
+              <div class="flex flex-wrap gap-2">
+                {#each bookmark.media.slice(0, layoutMode.value === 'list' ? 2 : 3) as media}
+                  <span class={metaPillClass()}>{media.media_type}</span>
+                {/each}
+                <button class="ghost-button px-3 py-2 text-sm" onclick={() => openInBrowser(bookmark.tweet_url)}>
+                  Open media on X
+                </button>
+              </div>
             </div>
           </div>
         {/if}

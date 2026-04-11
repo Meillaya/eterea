@@ -6,10 +6,12 @@ mod x_sync;
 
 use eterea_core::{Bookmark, Database, Ingester};
 use serde::Serialize;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::State;
+use url::Url;
 use x_sync::{
     build_failed_sync_status_from_previous, build_success_sync_status,
     import_bookmarks_from_x as sync_bookmarks_from_x, load_sync_status, metadata_key,
@@ -56,19 +58,40 @@ mod commands {
     use reqwest::{header::CONTENT_TYPE, redirect::Policy};
     use scraper::{Html, Selector};
 
+    fn trace_label(command: &str, trace_id: Option<&str>) -> String {
+        match trace_id {
+            Some(trace_id) if !trace_id.is_empty() => format!("[eterea][tauri][{command}][{trace_id}]"),
+            _ => format!("[eterea][tauri][{command}]"),
+        }
+    }
+
     #[tauri::command]
     pub fn get_bookmarks(
         state: State<AppState>,
         offset: Option<usize>,
         limit: Option<usize>,
+        trace_id: Option<String>,
     ) -> Result<PaginatedResponse<Bookmark>, String> {
-        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let label = trace_label("get_bookmarks", trace_id.as_deref());
         let offset = offset.unwrap_or(0);
         let limit = limit.unwrap_or(50);
+        eprintln!("{label} start offset={offset} limit={limit}");
 
+        let lock_started = std::time::Instant::now();
+        let db = state.db.lock().map_err(|e| e.to_string())?;
+        let lock_elapsed = lock_started.elapsed();
+        eprintln!("{label} db-lock={}ms", lock_elapsed.as_millis());
+
+        let query_started = std::time::Instant::now();
         let bookmarks = db.get_bookmarks(offset, limit).map_err(|e| e.to_string())?;
         let total = db.count_bookmarks().map_err(|e| e.to_string())?;
         let has_more = (offset + bookmarks.len()) < total as usize;
+        eprintln!(
+            "{label} done items={} total={} query={}ms",
+            bookmarks.len(),
+            total,
+            query_started.elapsed().as_millis()
+        );
 
         Ok(PaginatedResponse {
             items: bookmarks,
@@ -105,9 +128,23 @@ mod commands {
     }
 
     #[tauri::command]
-    pub fn get_stats(state: State<AppState>) -> Result<StatsResponse, String> {
+    pub fn get_stats(
+        state: State<AppState>,
+        trace_id: Option<String>,
+    ) -> Result<StatsResponse, String> {
+        let label = trace_label("get_stats", trace_id.as_deref());
+        eprintln!("{label} start");
+        let lock_started = std::time::Instant::now();
         let db = state.db.lock().map_err(|e| e.to_string())?;
+        eprintln!("{label} db-lock={}ms", lock_started.elapsed().as_millis());
+        let stats_started = std::time::Instant::now();
         let stats = db.get_stats().map_err(|e| e.to_string())?;
+        eprintln!(
+            "{label} done total={} tags={} stats={}ms",
+            stats.total_bookmarks,
+            stats.unique_tags,
+            stats_started.elapsed().as_millis()
+        );
 
         Ok(StatsResponse {
             total_bookmarks: stats.total_bookmarks,
@@ -182,11 +219,29 @@ mod commands {
         author: Option<String>,
         from_date: Option<String>,
         to_date: Option<String>,
+        offset: Option<usize>,
         favorites_only: Option<bool>,
         has_media: Option<bool>,
         limit: Option<usize>,
-    ) -> Result<Vec<Bookmark>, String> {
+        trace_id: Option<String>,
+    ) -> Result<PaginatedResponse<Bookmark>, String> {
+        let label = trace_label("search_with_filters", trace_id.as_deref());
+        let offset = offset.unwrap_or(0);
+        let limit = limit.unwrap_or(100);
+        eprintln!(
+            "{label} start offset={} limit={} query={:?} tag={:?} author={:?} favorites_only={} has_media={:?}",
+            offset,
+            limit,
+            query,
+            tag,
+            author,
+            favorites_only.unwrap_or(false),
+            has_media
+        );
+
+        let lock_started = std::time::Instant::now();
         let db = state.db.lock().map_err(|e| e.to_string())?;
+        eprintln!("{label} db-lock={}ms", lock_started.elapsed().as_millis());
 
         let from = from_date
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
@@ -195,7 +250,9 @@ mod commands {
             .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
             .map(|d| d.with_timezone(&chrono::Utc));
 
-        db.search_with_filters(
+        let query_started = std::time::Instant::now();
+        let (items, total) = db
+            .search_with_filters_page(
             query.as_deref(),
             tag.as_deref(),
             author.as_deref(),
@@ -203,9 +260,26 @@ mod commands {
             to,
             favorites_only.unwrap_or(false),
             has_media,
-            limit.unwrap_or(100),
+            offset,
+            limit,
         )
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+        let has_more = (offset + items.len()) < total as usize;
+        eprintln!(
+            "{label} done items={} total={} query={}ms",
+            items.len(),
+            total,
+            query_started.elapsed().as_millis()
+        );
+
+        Ok(PaginatedResponse {
+            items,
+            total,
+            offset,
+            limit,
+            has_more,
+        })
     }
 
     #[tauri::command]
@@ -275,29 +349,42 @@ mod commands {
 
     #[tauri::command]
     pub async fn open_url(url: String) -> Result<(), String> {
-        open::that(&url).map_err(|e| e.to_string())
+        let parsed = parse_public_https_url(&url)?;
+        open::that(parsed.as_str()).map_err(|e| e.to_string())
     }
 
     #[tauri::command]
     pub async fn fetch_link_preview(url: String) -> Result<LinkPreview, String> {
         const MAX_LINK_PREVIEW_BYTES: u64 = 512 * 1024;
+        let parsed_url = parse_public_https_url(&url)?;
 
         let client = reqwest::Client::builder()
             .user_agent("Eterea/0.1 (+https://github.com/eterea)")
-            .redirect(Policy::limited(5))
+            .redirect(Policy::custom(|attempt| {
+                if attempt.previous().len() >= 5 {
+                    return attempt.error("Too many redirects.");
+                }
+
+                if parse_public_https_url(attempt.url().as_str()).is_err() {
+                    return attempt.error("Redirect target is not allowed.");
+                }
+
+                attempt.follow()
+            }))
             .connect_timeout(Duration::from_millis(800))
             .timeout(Duration::from_millis(1_500))
             .build()
             .map_err(|e| e.to_string())?;
 
         let response = client
-            .get(&url)
+            .get(parsed_url.clone())
             .send()
             .await
             .map_err(|e| e.to_string())?
             .error_for_status()
             .map_err(|e| e.to_string())?;
         let final_url = response.url().to_string();
+        parse_public_https_url(&final_url)?;
         let content_type = response
             .headers()
             .get(CONTENT_TYPE)
@@ -333,13 +420,98 @@ mod commands {
         let site_name = extract_meta(&document, &["og:site_name"]);
 
         Ok(LinkPreview {
-            url,
+            url: parsed_url.to_string(),
             final_url,
             title,
             description,
             image_url,
             site_name,
         })
+    }
+
+    fn parse_public_https_url(raw: &str) -> Result<Url, String> {
+        let parsed = Url::parse(raw).map_err(|_| "Invalid URL.".to_string())?;
+        if parsed.scheme() != "https" {
+            return Err("Only HTTPS URLs are allowed.".to_string());
+        }
+
+        let host = parsed
+            .host_str()
+            .ok_or_else(|| "URL must include a hostname.".to_string())?
+            .to_ascii_lowercase();
+
+        if host == "localhost" || host.ends_with(".local") || host.ends_with(".internal") {
+            return Err("Local network URLs are not allowed.".to_string());
+        }
+
+        if !host_resolves_to_public_ip(&host, parsed.port_or_known_default().unwrap_or(443))? {
+            return Err("Private or local network URLs are not allowed.".to_string());
+        }
+
+        Ok(parsed)
+    }
+
+    fn host_resolves_to_public_ip(host: &str, port: u16) -> Result<bool, String> {
+        let resolved = (host, port)
+            .to_socket_addrs()
+            .map_err(|_| "Unable to resolve URL host.".to_string())?;
+
+        let mut found_public = false;
+        for address in resolved {
+            if !is_public_ip(address.ip()) {
+                return Ok(false);
+            }
+            found_public = true;
+        }
+
+        Ok(found_public)
+    }
+
+    fn is_public_ip(ip: IpAddr) -> bool {
+        match ip {
+            IpAddr::V4(ipv4) => is_public_ipv4(ipv4),
+            IpAddr::V6(ipv6) => is_public_ipv6(ipv6),
+        }
+    }
+
+    fn is_public_ipv4(ip: Ipv4Addr) -> bool {
+        let octets = ip.octets();
+        if ip.is_private()
+            || ip.is_loopback()
+            || ip.is_link_local()
+            || ip.is_multicast()
+            || ip.is_unspecified()
+        {
+            return false;
+        }
+
+        if octets[0] == 0
+            || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+            || (octets[0] == 192 && octets[1] == 0 && octets[2] == 0)
+            || (octets[0] == 192 && octets[1] == 0 && octets[2] == 2)
+            || (octets[0] == 198 && octets[1] == 18)
+            || (octets[0] == 198 && octets[1] == 19)
+            || (octets[0] == 198 && octets[1] == 51 && octets[2] == 100)
+            || (octets[0] == 203 && octets[1] == 0 && octets[2] == 113)
+        {
+            return false;
+        }
+
+        true
+    }
+
+    fn is_public_ipv6(ip: Ipv6Addr) -> bool {
+        if ip.is_loopback() || ip.is_unspecified() || ip.is_multicast() {
+            return false;
+        }
+
+        let segments = ip.segments();
+        let first = segments[0];
+        if (first & 0xfe00) == 0xfc00 || (first & 0xffc0) == 0xfe80 {
+            return false;
+        }
+
+        true
     }
 
     fn extract_meta(document: &Html, keys: &[&str]) -> Option<String> {

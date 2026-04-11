@@ -1,5 +1,3 @@
-// Core types matching Rust backend models
-
 export interface Bookmark {
   id: string;
   tweet_url: string;
@@ -34,15 +32,13 @@ export interface BookmarkStats {
 
 export interface SearchFilters {
   query?: string;
-  tags?: string[];
+  tag?: string;
   author?: string;
-  date_from?: string;
-  date_to?: string;
-  has_media?: boolean;
-  favorites_only?: boolean;
+  fromDate?: string;
+  toDate?: string;
+  favoritesOnly?: boolean;
+  hasMedia?: boolean;
 }
-
-export type ViewMode = 'all' | 'favorites' | 'recent';
 
 export interface PaginatedResponse<T> {
   items: T[];

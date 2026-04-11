@@ -1,0 +1,80 @@
+<script lang="ts">
+  import { searchQuery, selectedTag } from '$lib/stores/bookmarks.svelte';
+
+  let inputValue = $state('');
+  let inputRef: HTMLInputElement;
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+  $effect(() => {
+    if (searchQuery.value !== inputValue) {
+      inputValue = searchQuery.value;
+    }
+  });
+
+  function handleInput(event: Event) {
+    const value = (event.target as HTMLInputElement).value;
+    inputValue = value;
+
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      searchQuery.set(value);
+    }, 120);
+  }
+
+  function handleClear() {
+    inputValue = '';
+    searchQuery.set('');
+    selectedTag.clear();
+    inputRef?.focus();
+  }
+
+  function handleKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      handleClear();
+    }
+  }
+
+  function handleGlobalKeydown(event: KeyboardEvent) {
+    if (event.key === '/' && !['INPUT', 'TEXTAREA'].includes((event.target as HTMLElement).tagName)) {
+      event.preventDefault();
+      inputRef?.focus();
+    }
+  }
+</script>
+
+<svelte:window onkeydown={handleGlobalKeydown} />
+
+<div class="relative overflow-hidden rounded-[1.6rem] border border-border bg-bg-secondary/85 px-4 py-3 shadow-[var(--shadow-soft)]">
+  <div class="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-5 text-text-muted">
+    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M21 21l-5.5-5.5M16 10.5a5.5 5.5 0 11-11 0 5.5 5.5 0 0111 0z" />
+    </svg>
+  </div>
+
+  <input
+    bind:this={inputRef}
+    type="text"
+    class="w-full border-none bg-transparent pl-9 pr-18 text-base text-text-primary placeholder:text-text-muted focus:outline-none"
+    placeholder="Search your archive by text, author, or tag"
+    value={inputValue}
+    oninput={handleInput}
+    onkeydown={handleKeydown}
+  />
+
+  {#if inputValue || selectedTag.value}
+    <button
+      class="absolute inset-y-0 right-0 flex items-center pr-5 text-text-muted transition-colors hover:text-text-primary"
+      onclick={handleClear}
+      title="Clear search"
+      aria-label="Clear search"
+    >
+      <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M6 18L18 6M6 6l12 12" />
+      </svg>
+    </button>
+  {:else}
+    <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-5">
+      <kbd class="rounded-full border border-border-subtle bg-bg-tertiary px-2.5 py-1 text-[11px] text-text-muted">/</kbd>
+    </div>
+  {/if}
+</div>

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { fetchLinkPreview, openInBrowser } from '$lib/api';
-  import type { LinkPreview } from '$lib/types';
+  import type { LinkPreview as LinkPreviewData } from '$lib/types';
 
   interface Props {
     url: string;
@@ -9,13 +9,13 @@
 
   let { url }: Props = $props();
   let container: HTMLDivElement | undefined;
-  let preview = $state<LinkPreview | null>(null);
+  let preview = $state<LinkPreviewData | null>(null);
   let failed = $state(false);
-  let hasStarted = false;
+  let started = false;
 
   async function loadPreview() {
-    if (hasStarted) return;
-    hasStarted = true;
+    if (started) return;
+    started = true;
 
     try {
       preview = await fetchLinkPreview(url);
@@ -37,54 +37,31 @@
         observer.disconnect();
         void loadPreview();
       },
-      { rootMargin: '320px 0px' }
+      { rootMargin: '280px 0px' },
     );
 
     observer.observe(container);
-
     return () => observer.disconnect();
   });
 </script>
 
 <div bind:this={container}>
   {#if preview}
-    <button
-      class="overflow-hidden rounded-[1.3rem] border border-border bg-bg-secondary/60 text-left transition-colors hover:border-border-strong"
-      onclick={() => openInBrowser(preview?.final_url || url)}
-    >
-      <div class="grid gap-0 md:grid-cols-[180px,1fr]">
-        {#if preview.image_url}
-          <img
-            src={preview.image_url}
-            alt={preview.title ?? preview.final_url}
-            class="h-full min-h-32 w-full object-cover"
-            loading="lazy"
-          />
+    <button class="soft-panel w-full overflow-hidden rounded-[1.35rem] text-left transition-colors hover:border-border-strong" onclick={() => openInBrowser(preview?.final_url || url)}>
+      <div class="space-y-2 p-4">
+        {#if preview.site_name}
+          <p class="section-label">{preview.site_name}</p>
         {/if}
-        <div class="space-y-2 p-4">
-          {#if preview.site_name}
-            <p class="eyebrow">{preview.site_name}</p>
-          {/if}
-          <p class="text-sm font-medium text-text-primary">
-            {preview.title ?? preview.final_url}
-          </p>
-          {#if preview.description}
-            <p class="line-clamp-3 text-sm text-text-secondary">
-              {preview.description}
-            </p>
-          {/if}
-        </div>
+        <p class="text-sm font-medium text-text-primary">{preview.title ?? preview.final_url}</p>
+        {#if preview.description}
+          <p class="text-sm leading-6 text-text-secondary compact-note">{preview.description}</p>
+        {/if}
       </div>
     </button>
   {:else}
-    <a
-      href={url}
-      class="flex items-center gap-2 rounded-[1.1rem] border border-border-subtle bg-bg-secondary/45 px-3 py-2 text-sm text-text-secondary transition-colors hover:border-border hover:text-accent"
-      target="_blank"
-      rel="noreferrer"
-    >
+    <button class="pill w-full justify-between transition-colors hover:border-border-accent hover:text-accent" onclick={() => openInBrowser(url)}>
       <span class="truncate">{failed ? url : 'Open linked article'}</span>
       <span aria-hidden="true">↗</span>
-    </a>
+    </button>
   {/if}
 </div>

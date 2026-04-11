@@ -212,7 +212,7 @@ impl Database {
                JOIN bookmarks_fts_content fc ON fc.bookmark_id = b.id
                JOIN bookmarks_fts fts ON fts.rowid = fc.rowid
                WHERE bookmarks_fts MATCH ?1
-               ORDER BY bm25(bookmarks_fts), b.tweeted_at DESC
+               ORDER BY bm25(bookmarks_fts), b.tweeted_at DESC, b.id DESC
                LIMIT ?2"#,
         )?;
 
@@ -244,23 +244,36 @@ impl Database {
 
     /// Get all bookmarks with pagination
     pub fn get_bookmarks(&self, offset: usize, limit: usize) -> Result<Vec<Bookmark>> {
+        let overall_started = std::time::Instant::now();
         let mut stmt = self.conn.prepare(
             r#"SELECT id, tweet_url, content, note_text, tweeted_at, imported_at,
                       author_handle, author_name, author_profile_url, author_profile_image,
                       comments, is_favorite
                FROM bookmarks
-               ORDER BY tweeted_at DESC
+               ORDER BY tweeted_at DESC, id DESC
                LIMIT ?1 OFFSET ?2"#,
         )?;
 
+        let query_started = std::time::Instant::now();
         let mut bookmarks: Vec<Bookmark> = stmt
             .query_map(params![limit as i64, offset as i64], |row| {
                 self.row_to_bookmark(row)
             })?
             .filter_map(|r| r.ok())
             .collect();
+        let query_elapsed = query_started.elapsed();
 
+        let hydrate_started = std::time::Instant::now();
         self.hydrate_bookmarks(&mut bookmarks)?;
+        eprintln!(
+            "[eterea][db][get_bookmarks] offset={} limit={} rows={} query={}ms hydrate={}ms total={}ms",
+            offset,
+            limit,
+            bookmarks.len(),
+            query_elapsed.as_millis(),
+            hydrate_started.elapsed().as_millis(),
+            overall_started.elapsed().as_millis()
+        );
 
         Ok(bookmarks)
     }
@@ -286,7 +299,7 @@ impl Database {
                JOIN bookmark_tags bt ON bt.bookmark_id = b.id
                JOIN tags t ON t.id = bt.tag_id
                WHERE t.name = ?1
-               ORDER BY b.tweeted_at DESC
+               ORDER BY b.tweeted_at DESC, b.id DESC
                LIMIT ?2 OFFSET ?3"#,
         )?;
 
@@ -315,7 +328,7 @@ impl Database {
                       comments, is_favorite
                FROM bookmarks
                WHERE author_handle = ?1
-               ORDER BY tweeted_at DESC
+               ORDER BY tweeted_at DESC, id DESC
                LIMIT ?2 OFFSET ?3"#,
         )?;
 
@@ -400,7 +413,7 @@ impl Database {
                       comments, is_favorite
                FROM bookmarks
                WHERE is_favorite = 1
-               ORDER BY tweeted_at DESC
+               ORDER BY tweeted_at DESC, id DESC
                LIMIT ?1 OFFSET ?2"#,
         )?;
 
@@ -433,7 +446,7 @@ impl Database {
                       comments, is_favorite
                FROM bookmarks
                WHERE tweeted_at >= ?1 AND tweeted_at <= ?2
-               ORDER BY tweeted_at DESC
+               ORDER BY tweeted_at DESC, id DESC
                LIMIT ?3 OFFSET ?4"#,
         )?;
 
@@ -463,13 +476,104 @@ impl Database {
         has_media: Option<bool>,
         limit: usize,
     ) -> Result<Vec<Bookmark>> {
+        let (bookmarks, _) = self.search_with_filters_page(
+            query,
+            tag,
+            author,
+            from_date,
+            to_date,
+            favorites_only,
+            has_media,
+            0,
+            limit,
+        )?;
+
+        Ok(bookmarks)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn search_with_filters_page(
+        &self,
+        query: Option<&str>,
+        tag: Option<&str>,
+        author: Option<&str>,
+        from_date: Option<chrono::DateTime<chrono::Utc>>,
+        to_date: Option<chrono::DateTime<chrono::Utc>>,
+        favorites_only: bool,
+        has_media: Option<bool>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(Vec<Bookmark>, i64)> {
+        let overall_started = std::time::Instant::now();
+        let (from_clause, params) = self.build_filtered_query_parts(
+            query,
+            tag,
+            author,
+            from_date,
+            to_date,
+            favorites_only,
+            has_media,
+        );
+
+        let count_sql = format!("SELECT COUNT(DISTINCT b.id){from_clause}");
+        let count_started = std::time::Instant::now();
+        let total: i64 = self
+            .conn
+            .query_row(&count_sql, params_from_iter(params.iter()), |row| row.get(0))?;
+        let count_elapsed = count_started.elapsed();
+
         let mut sql = String::from(
             r#"SELECT DISTINCT b.id, b.tweet_url, b.content, b.note_text, b.tweeted_at, b.imported_at,
                       b.author_handle, b.author_name, b.author_profile_url, b.author_profile_image,
-                      b.comments, b.is_favorite
-               FROM bookmarks b"#,
+                      b.comments, b.is_favorite"#,
+        );
+        sql.push_str(&from_clause);
+        sql.push_str(" ORDER BY b.tweeted_at DESC, b.id DESC");
+        sql.push_str(" LIMIT ? OFFSET ?");
+
+        let mut query_params = params.clone();
+        query_params.push(Value::Integer(limit as i64));
+        query_params.push(Value::Integer(offset as i64));
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let query_started = std::time::Instant::now();
+        let mut bookmarks: Vec<Bookmark> = stmt
+            .query_map(params_from_iter(query_params.iter()), |row| {
+                self.row_to_bookmark(row)
+            })?
+            .filter_map(|r| r.ok())
+            .collect();
+        let query_elapsed = query_started.elapsed();
+
+        let hydrate_started = std::time::Instant::now();
+        self.hydrate_bookmarks(&mut bookmarks)?;
+        eprintln!(
+            "[eterea][db][search_with_filters_page] offset={} limit={} total={} rows={} count={}ms query={}ms hydrate={}ms total={}ms",
+            offset,
+            limit,
+            total,
+            bookmarks.len(),
+            count_elapsed.as_millis(),
+            query_elapsed.as_millis(),
+            hydrate_started.elapsed().as_millis(),
+            overall_started.elapsed().as_millis()
         );
 
+        Ok((bookmarks, total))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_filtered_query_parts(
+        &self,
+        query: Option<&str>,
+        tag: Option<&str>,
+        author: Option<&str>,
+        from_date: Option<chrono::DateTime<chrono::Utc>>,
+        to_date: Option<chrono::DateTime<chrono::Utc>>,
+        favorites_only: bool,
+        has_media: Option<bool>,
+    ) -> (String, Vec<Value>) {
+        let mut from_clause = String::from(r#" FROM bookmarks b"#);
         let mut conditions = Vec::new();
         let mut params = Vec::<Value>::new();
         let mut uses_fts = false;
@@ -519,37 +623,23 @@ impl Database {
         }
 
         if uses_fts {
-            sql.push_str(" JOIN bookmarks_fts_content fc ON fc.bookmark_id = b.id");
-            sql.push_str(" JOIN bookmarks_fts fts ON fts.rowid = fc.rowid");
+            from_clause.push_str(" JOIN bookmarks_fts_content fc ON fc.bookmark_id = b.id");
+            from_clause.push_str(" JOIN bookmarks_fts fts ON fts.rowid = fc.rowid");
         }
         if uses_tags {
-            sql.push_str(" JOIN bookmark_tags bt ON bt.bookmark_id = b.id");
-            sql.push_str(" JOIN tags t ON t.id = bt.tag_id");
+            from_clause.push_str(" JOIN bookmark_tags bt ON bt.bookmark_id = b.id");
+            from_clause.push_str(" JOIN tags t ON t.id = bt.tag_id");
         }
         if uses_media_join {
-            sql.push_str(" JOIN media m ON m.bookmark_id = b.id");
+            from_clause.push_str(" JOIN media m ON m.bookmark_id = b.id");
         }
 
         if !conditions.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&conditions.join(" AND "));
+            from_clause.push_str(" WHERE ");
+            from_clause.push_str(&conditions.join(" AND "));
         }
 
-        sql.push_str(" ORDER BY b.tweeted_at DESC");
-        sql.push_str(" LIMIT ?");
-        params.push(Value::Integer(limit as i64));
-
-        let mut stmt = self.conn.prepare(&sql)?;
-        let mut bookmarks: Vec<Bookmark> = stmt
-            .query_map(params_from_iter(params.iter()), |row| {
-                self.row_to_bookmark(row)
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        self.hydrate_bookmarks(&mut bookmarks)?;
-
-        Ok(bookmarks)
+        (from_clause, params)
     }
 
     fn hydrate_bookmarks(&self, bookmarks: &mut [Bookmark]) -> Result<()> {
@@ -557,12 +647,17 @@ impl Database {
             return Ok(());
         }
 
+        let overall_started = std::time::Instant::now();
         let bookmark_ids = bookmarks
             .iter()
             .map(|bookmark| bookmark.id.clone())
             .collect::<Vec<_>>();
+        let tags_started = std::time::Instant::now();
         let tags_by_bookmark = self.load_tags_for_bookmarks(&bookmark_ids)?;
+        let tags_elapsed = tags_started.elapsed();
+        let media_started = std::time::Instant::now();
         let media_by_bookmark = self.load_media_for_bookmarks(&bookmark_ids)?;
+        let media_elapsed = media_started.elapsed();
 
         for bookmark in bookmarks {
             bookmark.tags = tags_by_bookmark
@@ -574,6 +669,13 @@ impl Database {
                 .cloned()
                 .unwrap_or_default();
         }
+        eprintln!(
+            "[eterea][db][hydrate_bookmarks] bookmarks={} tags={}ms media={}ms total={}ms",
+            bookmark_ids.len(),
+            tags_elapsed.as_millis(),
+            media_elapsed.as_millis(),
+            overall_started.elapsed().as_millis()
+        );
         Ok(())
     }
 
@@ -676,14 +778,25 @@ impl Database {
 
     /// Get database statistics
     pub fn get_stats(&self) -> Result<BookmarkStats> {
+        let overall_started = std::time::Instant::now();
         if let Some(snapshot) = self.get_metadata(STATS_SNAPSHOT_METADATA_KEY)? {
             if let Ok(stats) = serde_json::from_str::<BookmarkStats>(&snapshot) {
+                eprintln!(
+                    "[eterea][db][get_stats] snapshot-hit total={}ms",
+                    overall_started.elapsed().as_millis()
+                );
                 return Ok(stats);
             }
         }
 
+        let compute_started = std::time::Instant::now();
         let stats = self.compute_stats()?;
         self.persist_stats_snapshot(&stats)?;
+        eprintln!(
+            "[eterea][db][get_stats] recompute compute={}ms total={}ms",
+            compute_started.elapsed().as_millis(),
+            overall_started.elapsed().as_millis()
+        );
         Ok(stats)
     }
 

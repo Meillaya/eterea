@@ -13,59 +13,60 @@ function read(relativePath: string): string {
 }
 
 describe('frontend remake verification guards', () => {
-  test('removes the stats route and stale stats navigation affordances', () => {
+  test('deletes the old frontend shell and stats references', () => {
     expect(fileExists('src/routes/stats/+page.svelte')).toBe(false);
+    expect(fileExists('src/lib/components/Header.svelte')).toBe(false);
+    expect(fileExists('src/lib/components/Sidebar.svelte')).toBe(false);
+    expect(fileExists('src/lib/components/SearchBar.svelte')).toBe(false);
+    expect(fileExists('src/lib/components/ImportModal.svelte')).toBe(false);
 
-    const header = read('src/lib/components/Header.svelte');
-    expect(header).not.toContain('href="/stats"');
-    expect(header).toContain('href="/settings"');
+    const readme = read('../../README.md');
+    expect(readme).not.toContain('Stats dashboard');
   });
 
-  test('keeps the primary library shell wired to preserved workflows', () => {
+  test('keeps the library route orchestration-only and wired to the new shell', () => {
     const page = read('src/routes/+page.svelte');
 
-    expect(page).toContain("import BookmarkList from '$lib/components/BookmarkList.svelte';");
-    expect(page).toContain("import DateFilter from '$lib/components/DateFilter.svelte';");
-    expect(page).toContain("import ImportModal from '$lib/components/ImportModal.svelte';");
-    expect(page).toContain("import LayoutToggle from '$lib/components/LayoutToggle.svelte';");
-    expect(page).toContain("import SearchBar from '$lib/components/SearchBar.svelte';");
-    expect(page).toContain("import Sidebar from '$lib/components/Sidebar.svelte';");
-    expect(page).toContain('await refreshBookmarks();');
+    expect(page).toContain("import LibraryWorkspace from '$lib/components/LibraryWorkspace.svelte';");
+    expect(page).toContain("import ImportSheet from '$lib/components/ImportSheet.svelte';");
+    expect(page).toContain('hydrateCachedLibrarySnapshot();');
     expect(page).toContain('void loadStats({ suppressErrors: true });');
-    expect(page).toContain('<BookmarkList items={bookmarks.value} />');
+    expect(page).toContain('await refreshBookmarks();');
+    expect(page).toContain('<LibraryWorkspace onopenimport={() => (showImportSheet = true)} />');
   });
 
   test('preserves multiple layout modes for bookmark presentation', () => {
-    const toggle = read('src/lib/components/LayoutToggle.svelte');
-    const list = read('src/lib/components/BookmarkList.svelte');
+    const switcher = read('src/lib/components/LayoutSwitcher.svelte');
+    const feed = read('src/lib/components/BookmarkFeed.svelte');
 
-    expect(toggle).toContain("{ id: 'default', label: 'Focus' }");
-    expect(toggle).toContain("{ id: 'cards', label: 'Grid' }");
-    expect(toggle).toContain("{ id: 'compact', label: 'List' }");
-    expect(list).toContain("layoutMode.value === 'cards'");
-    expect(list).toContain("layoutMode.value === 'compact'");
-    expect(list).toContain('<BookmarkCard {bookmark} />');
-    expect(list).toContain('<BookmarkRow {bookmark} />');
+    expect(switcher).toContain("{ id: 'focus', label: 'Focus'");
+    expect(switcher).toContain("{ id: 'grid', label: 'Grid'");
+    expect(switcher).toContain("{ id: 'list', label: 'List'");
+    expect(feed).toContain("layoutMode.value === 'grid'");
+    expect(feed).toContain("layoutMode.value === 'list'");
+    expect(feed).toContain("toggleFavorite(bookmark.id)");
+    expect(feed).toContain("openInBrowser(bookmark.tweet_url)");
+    expect(feed).toContain("selectedTag.set(tag)");
   });
 
   test('keeps keyboard-friendly search controls', () => {
-    const searchBar = read('src/lib/components/SearchBar.svelte');
+    const searchInput = read('src/lib/components/SearchInput.svelte');
 
-    expect(searchBar).toContain("if (e.key === 'Escape')");
-    expect(searchBar).toContain("if (e.key === '/' && !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement).tagName))");
-    expect(searchBar).toContain("placeholder=\"Search your archive by text, author, or tag\"");
-    expect(searchBar).toContain('selectedTag.clear()');
+    expect(searchInput).toContain("if (event.key === 'Escape')");
+    expect(searchInput).toContain("if (event.key === '/' && !['INPUT', 'TEXTAREA'].includes((event.target as HTMLElement).tagName))");
+    expect(searchInput).toContain('placeholder="Search your archive by text, author, or tag"');
+    expect(searchInput).toContain('selectedTag.clear()');
   });
 
-  test('keeps sidebar navigation, favorites, and import/settings flows discoverable', () => {
-    const sidebar = read('src/lib/components/Sidebar.svelte');
-    const importModal = read('src/lib/components/ImportModal.svelte');
+  test('keeps navigation, favorites, settings, and import flows discoverable', () => {
+    const sidebar = read('src/lib/components/LibrarySidebar.svelte');
+    const importSheet = read('src/lib/components/ImportSheet.svelte');
 
     expect(sidebar).toContain("label: 'Library'");
     expect(sidebar).toContain("label: 'Recent'");
     expect(sidebar).toContain("label: 'Favorites'");
     expect(fileExists('src/routes/settings/+page.svelte')).toBe(true);
-    expect(importModal).toContain('Import directly from X');
-    expect(importModal).toContain('Import a file');
+    expect(importSheet).toContain('Import directly from X');
+    expect(importSheet).toContain('Import a file');
   });
 });

@@ -68,14 +68,14 @@
 
   function articleClass() {
     if (layoutMode.value === 'list') {
-      return 'surface-panel rounded-[1.35rem] border-l-2 border-l-border-accent p-4';
+      return 'feed-card surface-panel rounded-[1.35rem] border-l-2 border-l-border-accent p-4';
     }
 
     if (layoutMode.value === 'grid') {
-      return 'surface-panel rounded-[1.7rem] p-5';
+      return 'feed-card surface-panel rounded-[1.7rem] p-5';
     }
 
-    return 'surface-panel rounded-[2rem] p-6';
+    return 'feed-card surface-panel rounded-[2rem] p-6';
   }
 
   function copyClass() {
@@ -153,6 +153,15 @@
       return `${base} border-border-subtle bg-bg-secondary/35`;
     }
     return `${base} border-border-subtle bg-bg-primary/20`;
+  }
+
+  function mediaPlaceholderClass(index: number) {
+    if (layoutMode.value === 'list') {
+      return `media-placeholder flex min-h-14 items-end rounded-[0.9rem] px-3 py-2 text-[11px] text-text-muted`;
+    }
+
+    const heights = ['min-h-24', 'min-h-20', 'min-h-28'];
+    return `media-placeholder flex ${heights[index % heights.length]} items-end rounded-[1rem] px-3 py-3 text-[11px] text-text-muted`;
   }
 
   function footerClass() {
@@ -254,6 +263,13 @@
                   Open media on X
                 </button>
               </div>
+            </div>
+            <div class="mt-3 grid gap-2" class:grid-cols-2={layoutMode.value !== 'list'}>
+              {#each bookmark.media.slice(0, layoutMode.value === 'list' ? 2 : 3) as media, index}
+                <div class={mediaPlaceholderClass(index)}>
+                  <span>{media.media_type}</span>
+                </div>
+              {/each}
             </div>
           </div>
         {/if}

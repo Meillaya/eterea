@@ -134,6 +134,22 @@ video {
   backdrop-filter: blur(18px);
 }
 
+.feed-card {
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.feed-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-strong);
+  box-shadow:
+    var(--shadow-soft),
+    0 0 0 1px rgba(255, 135, 82, 0.08);
+}
+
 .soft-panel {
   border: 1px solid var(--border-subtle);
   background: rgba(15, 19, 27, 0.66);
@@ -259,6 +275,13 @@ video {
   overflow: hidden;
 }
 
+.media-placeholder {
+  border: 1px solid var(--border-subtle);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.03), rgba(255, 135, 82, 0.06)),
+    var(--bg-secondary);
+}
+
 .skeleton {
   position: relative;
   overflow: hidden;
@@ -281,5 +304,21 @@ kbd {
 @keyframes shimmer {
   to {
     transform: translateX(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feed-card,
+  .ghost-button,
+  .accent-button,
+  .icon-button,
+  .pill {
+    transition: none;
+  }
+
+  .feed-card:hover,
+  .ghost-button:hover,
+  .accent-button:hover {
+    transform: none;
   }
 }

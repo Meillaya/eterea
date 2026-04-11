@@ -1,5 +1,4 @@
 export { default as BookmarkFeed } from './BookmarkFeed.svelte';
-export { default as BookmarkSurface } from './BookmarkSurface.svelte';
 export { default as DateRangePicker } from './DateRangePicker.svelte';
 export { default as ImportSheet } from './ImportSheet.svelte';
 export { default as LayoutSwitcher } from './LayoutSwitcher.svelte';

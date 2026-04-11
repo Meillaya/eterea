@@ -68,7 +68,7 @@
 
   function articleClass() {
     if (layoutMode.value === 'list') {
-      return 'surface-panel rounded-[1.35rem] p-4';
+      return 'surface-panel rounded-[1.35rem] border-l-2 border-l-border-accent p-4';
     }
 
     if (layoutMode.value === 'grid') {
@@ -109,11 +109,31 @@
   }
 
   function chromeClass() {
+    return 'flex flex-wrap gap-2';
+  }
+
+  function avatarClass() {
     if (layoutMode.value === 'list') {
-      return 'flex flex-wrap gap-2';
+      return 'flex h-10 w-10 shrink-0 items-center justify-center rounded-[1rem] border border-border-subtle bg-linear-to-br from-bg-secondary/95 to-bg-tertiary/95 font-mono text-xs text-accent-secondary';
     }
 
-    return 'flex flex-wrap gap-2';
+    return 'flex h-11 w-11 shrink-0 items-center justify-center rounded-[1.1rem] border border-border-subtle bg-linear-to-br from-bg-secondary/95 to-bg-tertiary/95 font-mono text-sm text-accent-secondary';
+  }
+
+  function headerLayoutClass() {
+    if (layoutMode.value === 'list') {
+      return 'flex flex-wrap items-start justify-between gap-2';
+    }
+
+    return 'flex flex-wrap items-start justify-between gap-3';
+  }
+
+  function identityClass() {
+    if (layoutMode.value === 'list') {
+      return 'min-w-0 flex flex-1 items-start gap-2.5';
+    }
+
+    return 'min-w-0 flex flex-1 items-start gap-3';
   }
 
   function contentStackClass() {
@@ -134,15 +154,23 @@
     }
     return `${base} border-border-subtle bg-bg-primary/20`;
   }
+
+  function footerClass() {
+    if (layoutMode.value === 'list') {
+      return 'flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle pt-3 text-[11px] text-text-muted';
+    }
+
+    return 'flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle pt-3 text-xs text-text-muted';
+  }
 </script>
 
 <div class={containerClass()}>
   {#each items as bookmark (bookmark.id)}
     {@const links = extractedLinks(bookmark)}
     <article class={articleClass()}>
-      <div class="flex flex-wrap items-start justify-between gap-3">
-        <div class="min-w-0 flex flex-1 items-start gap-3">
-          <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-[1.1rem] border border-border-subtle bg-bg-secondary/75 font-mono text-sm text-accent-secondary">
+      <div class={headerLayoutClass()}>
+        <div class={identityClass()}>
+          <div class={avatarClass()}>
             {initials(bookmark)}
           </div>
 
@@ -182,9 +210,18 @@
       </div>
 
       <div class={contentStackClass()}>
-        <p class={`whitespace-pre-wrap break-words text-text-primary ${copyClass()}`}>
-          {bookmark.content || '(no text content)'}
-        </p>
+        {#if layoutMode.value !== 'list'}
+          <div class="flex items-start gap-3">
+            <span class="mt-0.5 text-3xl leading-none text-accent/35">“</span>
+            <p class={`whitespace-pre-wrap break-words text-text-primary ${copyClass()}`}>
+              {bookmark.content || '(no text content)'}
+            </p>
+          </div>
+        {:else}
+          <p class={`whitespace-pre-wrap break-words text-text-primary ${copyClass()}`}>
+            {bookmark.content || '(no text content)'}
+          </p>
+        {/if}
 
         {#if bookmark.note_text}
           <div class={contentPanelClass('note')}>
@@ -249,7 +286,7 @@
           </div>
         {/if}
 
-        <div class="flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle pt-3 text-xs text-text-muted">
+        <div class={footerClass()}>
           <div class="flex flex-wrap items-center gap-2">
             <span class={metaPillClass()}>{bookmark.id.slice(0, 8)}</span>
             {#if bookmark.author_profile_url}

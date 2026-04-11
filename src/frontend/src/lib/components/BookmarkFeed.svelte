@@ -23,6 +23,34 @@
     });
   }
 
+  function formatRelativeDate(value: string): string {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value;
+    }
+
+    const diff = Date.now() - date.getTime();
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const days = Math.floor(hours / 24);
+
+    if (hours < 1) return 'just now';
+    if (hours < 24) return `${hours}h`;
+    if (days < 7) return `${days}d`;
+    if (days < 30) return `${Math.floor(days / 7)}w`;
+    if (days < 365) return `${Math.floor(days / 30)}mo`;
+    return formatDate(value);
+  }
+
+  function initials(bookmark: Bookmark): string {
+    const source = bookmark.author_name || bookmark.author_handle || 'E';
+    return source
+      .split(/\s+/)
+      .map((part) => part[0] ?? '')
+      .join('')
+      .slice(0, 2)
+      .toUpperCase();
+  }
+
   async function handleDelete(id: string) {
     if (!confirm('Delete this bookmark?')) return;
     await deleteBookmark(id);
@@ -43,25 +71,56 @@
 
     return 'surface-panel rounded-[1.8rem] p-5';
   }
+
+  function copyClass() {
+    if (layoutMode.value === 'list') {
+      return 'text-sm leading-6';
+    }
+
+    if (layoutMode.value === 'grid') {
+      return 'text-[0.98rem] leading-7';
+    }
+
+    return 'text-[1.08rem] leading-8';
+  }
+
+  function metaPillClass(kind: 'accent' | 'muted' = 'muted') {
+    if (kind === 'accent') {
+      return 'inline-flex items-center rounded-full border border-border-accent bg-[color:var(--accent-soft)] px-2.5 py-1 text-[11px] font-medium text-accent-secondary';
+    }
+
+    return 'inline-flex items-center rounded-full border border-border-subtle bg-bg-primary/30 px-2.5 py-1 text-[11px] text-text-muted';
+  }
 </script>
 
 <div class={containerClass()}>
   {#each items as bookmark (bookmark.id)}
     <article class={articleClass()}>
       <div class="flex flex-wrap items-start justify-between gap-3">
-        <div class="min-w-0 flex-1">
-          <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-            <span class="font-medium text-text-primary">{bookmark.author_name || bookmark.author_handle || 'Unknown author'}</span>
-            <span class="text-text-muted">@{bookmark.author_handle || 'unknown'}</span>
+        <div class="min-w-0 flex flex-1 items-start gap-3">
+          <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-[1.1rem] border border-border-subtle bg-bg-secondary/75 font-mono text-sm text-accent-secondary">
+            {initials(bookmark)}
           </div>
-          <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-text-muted">
-            <span>{formatDate(bookmark.tweeted_at)}</span>
-            <span>·</span>
-            <span>saved {formatDate(bookmark.imported_at)}</span>
-            {#if bookmark.media?.length}
+
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+              <span class="font-medium text-text-primary">{bookmark.author_name || bookmark.author_handle || 'Unknown author'}</span>
+              <span class="text-text-muted">@{bookmark.author_handle || 'unknown'}</span>
+              {#if bookmark.is_favorite}
+                <span class={metaPillClass('accent')}>favorite</span>
+              {/if}
+            </div>
+            <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-text-muted">
+              <span>{formatRelativeDate(bookmark.tweeted_at)}</span>
               <span>·</span>
-              <span>{bookmark.media.length} media</span>
-            {/if}
+              <span>{formatDate(bookmark.tweeted_at)}</span>
+              <span>·</span>
+              <span>saved {formatDate(bookmark.imported_at)}</span>
+              {#if bookmark.media?.length}
+                <span>·</span>
+                <span>{bookmark.media.length} media</span>
+              {/if}
+            </div>
           </div>
         </div>
 
@@ -79,7 +138,7 @@
       </div>
 
       <div class="mt-4 space-y-3">
-        <p class="whitespace-pre-wrap break-words text-text-primary" class:text-sm={layoutMode.value === 'list'} class:leading-6={layoutMode.value === 'list'} class:text-[1.02rem]={layoutMode.value !== 'list'} class:leading-8={layoutMode.value !== 'list'}>
+        <p class={`whitespace-pre-wrap break-words text-text-primary ${copyClass()}`}>
           {bookmark.content || '(no text content)'}
         </p>
 
@@ -87,6 +146,22 @@
           <div class="rounded-[1rem] border border-border-subtle bg-bg-primary/25 px-4 py-3">
             <p class="section-label">Note</p>
             <p class="mt-2 text-sm leading-6 text-text-secondary">{bookmark.note_text}</p>
+          </div>
+        {/if}
+
+        {#if bookmark.media?.length}
+          <div class="rounded-[1rem] border border-border-subtle bg-bg-primary/20 px-4 py-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p class="section-label">Media attached</p>
+                <p class="mt-2 text-sm text-text-secondary">
+                  {bookmark.media.length} item{bookmark.media.length === 1 ? '' : 's'} available for this bookmark.
+                </p>
+              </div>
+              <button class="ghost-button px-3 py-2 text-sm" onclick={() => openInBrowser(bookmark.tweet_url)}>
+                Open media on X
+              </button>
+            </div>
           </div>
         {/if}
 
@@ -99,6 +174,13 @@
             {/each}
           </div>
         {/if}
+
+        <div class="flex flex-wrap items-center justify-between gap-2 border-t border-border-subtle pt-3 text-xs text-text-muted">
+          <span class={metaPillClass()}>{bookmark.id.slice(0, 8)}</span>
+          <button class="text-text-muted transition-colors hover:text-accent" onclick={() => openInBrowser(bookmark.tweet_url)}>
+            Open original →
+          </button>
+        </div>
       </div>
     </article>
   {/each}

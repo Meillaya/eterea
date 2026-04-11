@@ -1,8 +1,7 @@
 <script lang="ts">
-  import { deleteBookmark, openInBrowser, toggleFavorite } from '$lib/api';
+  import { deleteBookmark, normalizeExternalUrl, openInBrowser, toggleFavorite } from '$lib/api';
   import LinkPreview from '$lib/components/LinkPreview.svelte';
-  import { selectedTag } from '$lib/stores/bookmarks.svelte';
-  import { layoutMode } from '$lib/stores/bookmarks.svelte';
+  import { layoutMode, selectedAuthor, selectedTag } from '$lib/stores/bookmarks.svelte';
   import type { Bookmark } from '$lib/types';
 
   interface Props {
@@ -51,6 +50,10 @@
       .join('')
       .slice(0, 2)
       .toUpperCase();
+  }
+
+  function filterByAuthor(handle: string) {
+    selectedAuthor.set(handle.replace(/^@/, ''));
   }
 
   async function handleDelete(id: string) {
@@ -176,16 +179,29 @@
 <div class={containerClass()}>
   {#each items as bookmark (bookmark.id)}
     {@const links = extractedLinks(bookmark)}
+    {@const safeAvatarUrl = normalizeExternalUrl(bookmark.author_profile_image ?? '', { requirePublicHost: true })}
     <article class={articleClass()}>
       <div class={headerLayoutClass()}>
         <div class={identityClass()}>
-          <div class={avatarClass()}>
-            {initials(bookmark)}
-          </div>
+          {#if safeAvatarUrl}
+            <img
+              src={safeAvatarUrl}
+              alt={bookmark.author_name || bookmark.author_handle || ''}
+              class={avatarClass()}
+              onerror={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; (e.currentTarget.nextElementSibling as HTMLElement | null)?.style.setProperty('display', 'flex'); }}
+            />
+            <div class={avatarClass()} style="display:none">{initials(bookmark)}</div>
+          {:else}
+            <div class={avatarClass()}>{initials(bookmark)}</div>
+          {/if}
 
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-              <span class="font-medium text-text-primary">{bookmark.author_name || bookmark.author_handle || 'Unknown author'}</span>
+              <button
+                class="font-medium text-text-primary transition-colors hover:text-accent"
+                onclick={() => filterByAuthor(bookmark.author_handle || bookmark.author_name || '')}
+                title="Filter by this author"
+              >{bookmark.author_name || bookmark.author_handle || 'Unknown author'}</button>
               <span class="text-text-muted">@{bookmark.author_handle || 'unknown'}</span>
               {#if bookmark.is_favorite}
                 <span class={metaPillClass('accent')}>favorite</span>
@@ -266,9 +282,25 @@
             </div>
             <div class="mt-3 grid gap-2" class:grid-cols-2={layoutMode.value !== 'list'}>
               {#each bookmark.media.slice(0, layoutMode.value === 'list' ? 2 : 3) as media, index}
-                <div class={mediaPlaceholderClass(index)}>
-                  <span>{media.media_type}</span>
-                </div>
+                {@const safeMediaUrl = media.media_type === 'Image' ? normalizeExternalUrl(media.url, { requirePublicHost: true }) : null}
+                {#if safeMediaUrl}
+                  <img
+                    src={safeMediaUrl}
+                    alt="Attached media"
+                    class="w-full rounded-[1rem] object-cover"
+                    class:max-h-48={layoutMode.value === 'list'}
+                    class:max-h-64={layoutMode.value !== 'list'}
+                    loading="lazy"
+                    onerror={(e) => { const el = e.currentTarget as HTMLImageElement; el.style.display = 'none'; (el.nextElementSibling as HTMLElement | null)?.style.setProperty('display', 'flex'); }}
+                  />
+                  <div class={mediaPlaceholderClass(index)} style="display:none">
+                    <span>Image unavailable</span>
+                  </div>
+                {:else}
+                  <div class={mediaPlaceholderClass(index)}>
+                    <span>{media.media_type}</span>
+                  </div>
+                {/if}
               {/each}
             </div>
           </div>

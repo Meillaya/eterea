@@ -3,7 +3,7 @@
   import { hydrateCachedLibrarySnapshot, loadStats, refreshBookmarks } from '$lib/api';
   import LibraryWorkspace from '$lib/components/LibraryWorkspace.svelte';
   import ImportSheet from '$lib/components/ImportSheet.svelte';
-  import { dateRange, runtimeDiagnostics, searchQuery, selectedTag, viewMode } from '$lib/stores/bookmarks.svelte';
+  import { dateRange, hasMediaFilter, runtimeDiagnostics, searchQuery, selectedAuthor, selectedTag, viewMode } from '$lib/stores/bookmarks.svelte';
 
   let showImportSheet = $state(false);
   let ready = $state(false);
@@ -15,9 +15,11 @@
     return JSON.stringify({
       query: searchQuery.value,
       tag: selectedTag.value,
+      author: selectedAuthor.value,
       from: dateRange.value.from,
       to: dateRange.value.to,
       view: viewMode.value,
+      hasMedia: hasMediaFilter.value,
     });
   }
 

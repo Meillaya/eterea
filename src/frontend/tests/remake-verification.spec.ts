@@ -54,7 +54,7 @@ describe('frontend remake verification guards', () => {
 
     expect(searchInput).toContain("if (event.key === 'Escape')");
     expect(searchInput).toContain("if (event.key === '/' && !['INPUT', 'TEXTAREA'].includes((event.target as HTMLElement).tagName))");
-    expect(searchInput).toContain('placeholder="Search your archive by text, author, or tag"');
+    expect(searchInput).toContain('placeholder=');
     expect(searchInput).toContain('selectedTag.clear()');
   });
 

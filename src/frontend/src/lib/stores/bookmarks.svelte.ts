@@ -94,6 +94,22 @@ function createTagStore() {
   };
 }
 
+function createAuthorStore() {
+  let author = $state<string | null>(null);
+
+  return {
+    get value() {
+      return author;
+    },
+    set(next: string | null) {
+      author = next;
+    },
+    clear() {
+      author = null;
+    },
+  };
+}
+
 function createDateRangeStore() {
   let range = $state<{ from: string | null; to: string | null }>({
     from: null,
@@ -302,6 +318,8 @@ function createRuntimeDiagnosticsStore() {
 export const bookmarks = createBookmarksStore();
 export const searchQuery = createValueStore('');
 export const selectedTag = createTagStore();
+export const selectedAuthor = createAuthorStore();
+export const hasMediaFilter = createValueStore(false);
 export const dateRange = createDateRangeStore();
 export const viewMode = createValueStore<ViewMode>('all');
 export const layoutMode = createLayoutStore();

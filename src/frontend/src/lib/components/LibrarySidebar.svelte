@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { allTags, dateRange, feedMeta, searchQuery, selectedTag, viewMode } from '$lib/stores/bookmarks.svelte';
+  import { allTags, dateRange, feedMeta, searchQuery, selectedAuthor, selectedTag, stats, viewMode } from '$lib/stores/bookmarks.svelte';
 
   interface Props {
     onopenimport: () => void;
@@ -7,9 +7,17 @@
 
   let { onopenimport }: Props = $props();
 
+  let tagSearch = $state('');
+  const filteredTags = $derived(
+    tagSearch.trim()
+      ? allTags.value.filter(([tag]) => tag.toLowerCase().includes(tagSearch.toLowerCase()))
+      : allTags.value,
+  );
+
   function showLibrary() {
     searchQuery.set('');
     selectedTag.clear();
+    selectedAuthor.clear();
     dateRange.clear();
     viewMode.set('all');
   }
@@ -17,6 +25,7 @@
   function showRecent() {
     searchQuery.set('');
     selectedTag.clear();
+    selectedAuthor.clear();
     const to = new Date();
     const from = new Date();
     from.setDate(from.getDate() - 30);
@@ -27,12 +36,18 @@
   function showFavorites() {
     searchQuery.set('');
     selectedTag.clear();
+    selectedAuthor.clear();
     dateRange.clear();
     viewMode.set('favorites');
   }
 
   function activateTag(tag: string) {
+    if (selectedTag.value === tag) {
+      selectedTag.clear();
+      return;
+    }
     searchQuery.set('');
+    selectedAuthor.clear();
     dateRange.clear();
     selectedTag.set(tag);
     viewMode.set('all');
@@ -70,8 +85,16 @@
       </p>
 
       <div class="mt-4 flex flex-wrap gap-2 text-xs">
-        <span class="pill">{feedMeta.value.total.toLocaleString()} in archive</span>
-        <span class="pill">same ember palette</span>
+        <span class="pill">{feedMeta.value.total.toLocaleString()} saved</span>
+        {#if stats.value}
+          <span class="pill">{stats.value.unique_authors.toLocaleString()} authors</span>
+          <span class="pill">{stats.value.favorite_bookmarks.toLocaleString()} favorites</span>
+          {#if stats.value.earliest_date && stats.value.latest_date}
+            <span class="pill" title="{new Date(stats.value.earliest_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })} – {new Date(stats.value.latest_date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}">
+              {new Date(stats.value.earliest_date).getFullYear()}–{new Date(stats.value.latest_date).getFullYear()}
+            </span>
+          {/if}
+        {/if}
       </div>
 
       <div class="mt-5 grid gap-2">
@@ -99,23 +122,41 @@
 
     <div class="soft-panel rounded-[1.8rem] p-4">
       <div class="flex items-center justify-between gap-3">
-        <div>
-          <p class="section-label">Top tags</p>
-          <p class="mt-1 text-sm text-text-secondary">Quick pivots without dashboard clutter.</p>
-        </div>
+        <p class="section-label">Tags</p>
+        {#if allTags.value.length > 0}
+          <span class="pill">{allTags.value.length}</span>
+        {/if}
       </div>
 
       {#if allTags.value.length > 0}
-        <div class="mt-4 flex flex-wrap gap-2">
-          {#each allTags.value.slice(0, 10) as [tag, count]}
-            <button class="pill transition-colors hover:border-border-accent hover:text-accent" onclick={() => activateTag(tag)}>
+        {#if allTags.value.length > 8}
+          <div class="relative mt-3">
+            <input
+              type="text"
+              placeholder="Filter tags…"
+              bind:value={tagSearch}
+              class="w-full rounded-[1rem] border border-border bg-bg-tertiary/80 px-3 py-2 text-xs text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none"
+            />
+          </div>
+        {/if}
+
+        <div class="mt-3 max-h-64 space-y-1 overflow-y-auto pr-0.5">
+          {#each filteredTags as [tag, count]}
+            {@const isActive = selectedTag.value === tag}
+            <button
+              class={`flex w-full items-center justify-between rounded-[0.9rem] border px-3 py-1.5 text-xs transition-colors ${isActive ? 'border-border-accent bg-[color:var(--accent-soft)] text-accent' : 'border-transparent text-text-secondary hover:border-border-subtle hover:text-text-primary'}`}
+              onclick={() => activateTag(tag)}
+            >
               <span>#{tag}</span>
               <span class="font-mono text-[11px] text-text-muted">{count}</span>
             </button>
           {/each}
+          {#if filteredTags.length === 0}
+            <p class="py-2 text-xs text-text-muted">No tags match "{tagSearch}"</p>
+          {/if}
         </div>
       {:else}
-        <p class="mt-4 text-sm text-text-muted">Tags appear here once the archive metadata finishes loading.</p>
+        <p class="mt-4 text-sm text-text-muted">Tags appear once archive metadata loads.</p>
       {/if}
     </div>
   </div>

@@ -65,8 +65,67 @@ impl Database {
         self.conn.execute_batch(SCHEMA)?;
 
         self.ensure_is_favorite_column()?;
+        self.ensure_has_media_column()?;
 
         debug!("Database initialized");
+        Ok(())
+    }
+
+    fn ensure_has_media_column(&self) -> Result<()> {
+        let mut stmt = self.conn.prepare("PRAGMA table_info(bookmarks)")?;
+        let mut rows = stmt.query([])?;
+        let mut has_column = false;
+        while let Some(row) = rows.next()? {
+            let name: String = row.get(1)?;
+            if name.eq_ignore_ascii_case("has_media") {
+                has_column = true;
+                break;
+            }
+        }
+
+        if !has_column {
+            // Wrap ALTER + backfill in a transaction so a crash between the two
+            // doesn't leave every bookmark with has_media=0 permanently.
+            self.conn.execute("BEGIN IMMEDIATE", [])?;
+            let result = (|| -> Result<()> {
+                self.conn.execute(
+                    "ALTER TABLE bookmarks ADD COLUMN has_media INTEGER DEFAULT 0",
+                    [],
+                )?;
+                self.conn.execute(
+                    "UPDATE bookmarks SET has_media = (SELECT CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END FROM media WHERE bookmark_id = bookmarks.id)",
+                    [],
+                )?;
+                Ok(())
+            })();
+            match result {
+                Ok(()) => {
+                    self.conn.execute("COMMIT", [])?;
+                }
+                Err(e) => {
+                    let _ = self.conn.execute("ROLLBACK", []);
+                    return Err(e);
+                }
+            }
+        }
+
+        // These DDL statements depend on has_media existing — run after the migration above.
+        self.conn.execute_batch(
+            r#"
+CREATE INDEX IF NOT EXISTS idx_bookmarks_has_media ON bookmarks(has_media) WHERE has_media = 1;
+
+CREATE TRIGGER IF NOT EXISTS media_insert_set_has_media AFTER INSERT ON media BEGIN
+    UPDATE bookmarks SET has_media = 1 WHERE id = NEW.bookmark_id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS media_delete_update_has_media AFTER DELETE ON media BEGIN
+    UPDATE bookmarks SET has_media = (
+        SELECT CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END FROM media WHERE bookmark_id = OLD.bookmark_id
+    ) WHERE id = OLD.bookmark_id;
+END;
+"#,
+        )?;
+
         Ok(())
     }
 
@@ -123,11 +182,16 @@ impl Database {
 
     fn insert_bookmark_internal(&self, bookmark: &Bookmark) -> Result<()> {
         // Insert main bookmark
+        let has_media_flag = if bookmark.media.is_empty() {
+            0i32
+        } else {
+            1i32
+        };
         self.conn.execute(
-            r#"INSERT INTO bookmarks 
+            r#"INSERT INTO bookmarks
                (id, tweet_url, content, note_text, tweeted_at, imported_at,
-                author_handle, author_name, author_profile_url, author_profile_image, comments, is_favorite)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"#,
+                author_handle, author_name, author_profile_url, author_profile_image, comments, is_favorite, has_media)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)"#,
             params![
                 bookmark.id,
                 bookmark.tweet_url,
@@ -141,6 +205,7 @@ impl Database {
                 bookmark.author_profile_image,
                 bookmark.comments,
                 bookmark.is_favorite as i32,
+                has_media_flag,
             ],
         )?;
 
@@ -505,7 +570,7 @@ impl Database {
         limit: usize,
     ) -> Result<(Vec<Bookmark>, i64)> {
         let overall_started = std::time::Instant::now();
-        let (from_clause, params) = self.build_filtered_query_parts(
+        let (where_clause, mut params) = self.build_filtered_where_clause(
             query,
             tag,
             author,
@@ -515,45 +580,44 @@ impl Database {
             has_media,
         );
 
-        let count_sql = format!("SELECT COUNT(DISTINCT b.id){from_clause}");
-        let count_started = std::time::Instant::now();
-        let total: i64 = self
-            .conn
-            .query_row(&count_sql, params_from_iter(params.iter()), |row| row.get(0))?;
-        let count_elapsed = count_started.elapsed();
-
+        // Single query: data + total count via window function (no second COUNT query)
         let mut sql = String::from(
-            r#"SELECT DISTINCT b.id, b.tweet_url, b.content, b.note_text, b.tweeted_at, b.imported_at,
+            r#"SELECT b.id, b.tweet_url, b.content, b.note_text, b.tweeted_at, b.imported_at,
                       b.author_handle, b.author_name, b.author_profile_url, b.author_profile_image,
-                      b.comments, b.is_favorite"#,
+                      b.comments, b.is_favorite,
+                      COUNT(*) OVER() AS total_count
+               FROM bookmarks b"#,
         );
-        sql.push_str(&from_clause);
-        sql.push_str(" ORDER BY b.tweeted_at DESC, b.id DESC");
-        sql.push_str(" LIMIT ? OFFSET ?");
+        if !where_clause.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&where_clause);
+        }
+        sql.push_str(" ORDER BY b.tweeted_at DESC, b.id DESC LIMIT ? OFFSET ?");
 
-        let mut query_params = params.clone();
-        query_params.push(Value::Integer(limit as i64));
-        query_params.push(Value::Integer(offset as i64));
+        params.push(Value::Integer(limit as i64));
+        params.push(Value::Integer(offset as i64));
 
         let mut stmt = self.conn.prepare(&sql)?;
         let query_started = std::time::Instant::now();
-        let mut bookmarks: Vec<Bookmark> = stmt
-            .query_map(params_from_iter(query_params.iter()), |row| {
-                self.row_to_bookmark(row)
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
+
+        let mut total: i64 = 0;
+        let mut bookmarks = Vec::new();
+        let mut rows = stmt.query(params_from_iter(params.iter()))?;
+        while let Some(row) = rows.next()? {
+            // Named column access — safe against projection reordering
+            total = row.get::<_, i64>("total_count")?;
+            bookmarks.push(self.row_to_bookmark(row)?);
+        }
         let query_elapsed = query_started.elapsed();
 
         let hydrate_started = std::time::Instant::now();
         self.hydrate_bookmarks(&mut bookmarks)?;
         eprintln!(
-            "[eterea][db][search_with_filters_page] offset={} limit={} total={} rows={} count={}ms query={}ms hydrate={}ms total={}ms",
+            "[eterea][db][search_with_filters_page] offset={} limit={} total={} rows={} query={}ms hydrate={}ms total={}ms",
             offset,
             limit,
             total,
             bookmarks.len(),
-            count_elapsed.as_millis(),
             query_elapsed.as_millis(),
             hydrate_started.elapsed().as_millis(),
             overall_started.elapsed().as_millis()
@@ -562,8 +626,10 @@ impl Database {
         Ok((bookmarks, total))
     }
 
+    /// Build a WHERE clause using subqueries — no outer JOINs means no DISTINCT needed.
+    /// FTS and tag filters use IN-subqueries; has_media uses the denormalized column.
     #[allow(clippy::too_many_arguments)]
-    fn build_filtered_query_parts(
+    fn build_filtered_where_clause(
         &self,
         query: Option<&str>,
         tag: Option<&str>,
@@ -573,24 +639,31 @@ impl Database {
         favorites_only: bool,
         has_media: Option<bool>,
     ) -> (String, Vec<Value>) {
-        let mut from_clause = String::from(r#" FROM bookmarks b"#);
-        let mut conditions = Vec::new();
+        let mut conditions = Vec::<String>::new();
         let mut params = Vec::<Value>::new();
-        let mut uses_fts = false;
-        let mut uses_tags = false;
-        let mut uses_media_join = false;
 
         if let Some(q) = query {
             if !q.trim().is_empty() {
-                uses_fts = true;
-                conditions.push("bookmarks_fts MATCH ?".to_string());
+                // FTS via subquery: query the virtual table first (its optimized MATCH path),
+                // then look up bookmark_id via the rowid link to our content table.
+                // No outer JOIN → no row multiplication, no DISTINCT needed.
+                conditions.push(
+                    "b.id IN (SELECT fc.bookmark_id FROM bookmarks_fts fts \
+                     JOIN bookmarks_fts_content fc ON fc.rowid = fts.rowid \
+                     WHERE bookmarks_fts MATCH ?)"
+                        .to_string(),
+                );
                 params.push(Value::Text(Self::prepare_fts_query(q)));
             }
         }
 
         if let Some(t) = tag {
-            uses_tags = true;
-            conditions.push("t.name = ?".to_string());
+            // Tag via subquery: no outer JOIN, no row multiplication
+            conditions.push(
+                "b.id IN (SELECT bt.bookmark_id FROM bookmark_tags bt \
+                 JOIN tags t ON t.id = bt.tag_id WHERE t.name = ?)"
+                    .to_string(),
+            );
             params.push(Value::Text(t.to_string()));
         }
 
@@ -613,33 +686,11 @@ impl Database {
         }
 
         if let Some(has) = has_media {
-            if has {
-                uses_media_join = true;
-            } else {
-                conditions.push(
-                    "NOT EXISTS (SELECT 1 FROM media m WHERE m.bookmark_id = b.id)".to_string(),
-                );
-            }
+            // Use denormalized column — no JOIN needed
+            conditions.push(format!("b.has_media = {}", if has { 1 } else { 0 }));
         }
 
-        if uses_fts {
-            from_clause.push_str(" JOIN bookmarks_fts_content fc ON fc.bookmark_id = b.id");
-            from_clause.push_str(" JOIN bookmarks_fts fts ON fts.rowid = fc.rowid");
-        }
-        if uses_tags {
-            from_clause.push_str(" JOIN bookmark_tags bt ON bt.bookmark_id = b.id");
-            from_clause.push_str(" JOIN tags t ON t.id = bt.tag_id");
-        }
-        if uses_media_join {
-            from_clause.push_str(" JOIN media m ON m.bookmark_id = b.id");
-        }
-
-        if !conditions.is_empty() {
-            from_clause.push_str(" WHERE ");
-            from_clause.push_str(&conditions.join(" AND "));
-        }
-
-        (from_clause, params)
+        (conditions.join(" AND "), params)
     }
 
     fn hydrate_bookmarks(&self, bookmarks: &mut [Bookmark]) -> Result<()> {
@@ -849,8 +900,9 @@ impl Database {
     }
 
     fn persist_stats_snapshot(&self, stats: &BookmarkStats) -> Result<()> {
-        let payload = serde_json::to_string(stats)
-            .map_err(|error| Error::Other(format!("Failed to serialize stats snapshot: {error}")))?;
+        let payload = serde_json::to_string(stats).map_err(|error| {
+            Error::Other(format!("Failed to serialize stats snapshot: {error}"))
+        })?;
         self.set_metadata(STATS_SNAPSHOT_METADATA_KEY, &payload)
     }
 
@@ -1086,7 +1138,8 @@ mod tests {
             true,
         );
 
-        db.insert_bookmarks(&[first.clone(), second.clone()]).unwrap();
+        db.insert_bookmarks(&[first.clone(), second.clone()])
+            .unwrap();
 
         let initial = db.get_stats().unwrap();
         assert_eq!(initial.total_bookmarks, 2);

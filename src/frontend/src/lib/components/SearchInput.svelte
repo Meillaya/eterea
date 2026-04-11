@@ -1,13 +1,23 @@
 <script lang="ts">
-  import { searchQuery, selectedTag } from '$lib/stores/bookmarks.svelte';
+  import { searchQuery, selectedAuthor, selectedTag } from '$lib/stores/bookmarks.svelte';
 
   let inputValue = $state('');
   let inputRef: HTMLInputElement;
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
   $effect(() => {
-    if (searchQuery.value !== inputValue) {
-      inputValue = searchQuery.value;
+    // Sync external changes back to input (e.g. filter chip clear)
+    const externalQuery = searchQuery.value;
+    const externalAuthor = selectedAuthor.value;
+
+    if (externalAuthor && inputValue !== '@' + externalAuthor) {
+      // Author was set externally (or changed) — sync @handle to input box
+      inputValue = '@' + externalAuthor;
+    } else if (!externalAuthor && inputValue.startsWith('@')) {
+      // Author was cleared externally — clear the @handle input
+      inputValue = '';
+    } else if (!inputValue.startsWith('@') && externalQuery !== inputValue) {
+      inputValue = externalQuery;
     }
   });
 
@@ -17,14 +27,21 @@
 
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      searchQuery.set(value);
-    }, 120);
+      if (value.startsWith('@') && value.length > 1) {
+        selectedAuthor.set(value.slice(1).trim());
+        if (searchQuery.value) searchQuery.set('');
+      } else {
+        if (selectedAuthor.value) selectedAuthor.clear();
+        searchQuery.set(value);
+      }
+    }, 100);
   }
 
   function handleClear() {
     inputValue = '';
     searchQuery.set('');
     selectedTag.clear();
+    selectedAuthor.clear();
     inputRef?.focus();
   }
 
@@ -55,13 +72,13 @@
     bind:this={inputRef}
     type="text"
     class="w-full border-none bg-transparent pl-9 pr-18 text-base text-text-primary placeholder:text-text-muted focus:outline-none"
-    placeholder="Search your archive by text, author, or tag"
+    placeholder="Search text, or type @handle to filter by author"
     value={inputValue}
     oninput={handleInput}
     onkeydown={handleKeydown}
   />
 
-  {#if inputValue || selectedTag.value}
+  {#if inputValue || selectedTag.value || selectedAuthor.value}
     <button
       class="absolute inset-y-0 right-0 flex items-center pr-5 text-text-muted transition-colors hover:text-text-primary"
       onclick={handleClear}

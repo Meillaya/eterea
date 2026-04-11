@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS bookmarks (
     author_profile_url TEXT,
     author_profile_image TEXT,
     comments TEXT,
-    is_favorite INTEGER DEFAULT 0  -- Boolean as integer (0/1)
+    is_favorite INTEGER DEFAULT 0,  -- Boolean as integer (0/1)
+    has_media INTEGER DEFAULT 0     -- Denormalized: 1 if any media rows exist (avoids JOIN on filter)
 );
 
 -- Tags table (normalized for efficient filtering)
@@ -73,9 +74,11 @@ CREATE TABLE IF NOT EXISTS bookmarks_fts_content (
 
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_bookmarks_tweeted_at ON bookmarks(tweeted_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_tweeted_at_id ON bookmarks(tweeted_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_author_handle ON bookmarks(author_handle);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_imported_at ON bookmarks(imported_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_favorite ON bookmarks(is_favorite) WHERE is_favorite = 1;
+CREATE INDEX IF NOT EXISTS idx_bookmarks_fav_date ON bookmarks(is_favorite, tweeted_at DESC) WHERE is_favorite = 1;
 CREATE INDEX IF NOT EXISTS idx_bookmark_tags_bookmark ON bookmark_tags(bookmark_id);
 CREATE INDEX IF NOT EXISTS idx_bookmark_tags_tag ON bookmark_tags(tag_id);
 CREATE INDEX IF NOT EXISTS idx_media_bookmark ON media(bookmark_id);
@@ -98,6 +101,7 @@ CREATE TRIGGER IF NOT EXISTS bookmarks_fts_update AFTER UPDATE ON bookmarks_fts_
     INSERT INTO bookmarks_fts(rowid, content, note_text, author_handle, author_name, tags_text)
     VALUES (NEW.rowid, NEW.content, NEW.note_text, NEW.author_handle, NEW.author_name, NEW.tags_text);
 END;
+
 "#;
 
 pub const PRAGMAS: &str = r#"

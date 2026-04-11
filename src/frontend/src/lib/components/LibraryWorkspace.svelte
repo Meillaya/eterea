@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { bookmarks, dateRange, feedMeta, invokeDiagnostics, isLoading, isLoadingMore, isRefreshing, libraryDiagnostics, loadError, runtimeDiagnostics, searchQuery, selectedTag, viewMode } from '$lib/stores/bookmarks.svelte';
+  import { bookmarks, dateRange, feedMeta, hasMediaFilter, invokeDiagnostics, isLoading, isLoadingMore, isRefreshing, libraryDiagnostics, loadError, runtimeDiagnostics, searchQuery, selectedAuthor, selectedTag, viewMode } from '$lib/stores/bookmarks.svelte';
   import { loadMoreBookmarks } from '$lib/api';
   import BookmarkFeed from './BookmarkFeed.svelte';
   import DateRangePicker from './DateRangePicker.svelte';
@@ -16,6 +16,8 @@
   function showLibrary() {
     searchQuery.set('');
     selectedTag.clear();
+    selectedAuthor.clear();
+    hasMediaFilter.set(false);
     dateRange.clear();
     viewMode.set('all');
   }
@@ -23,6 +25,8 @@
   function showRecent() {
     searchQuery.set('');
     selectedTag.clear();
+    selectedAuthor.clear();
+    hasMediaFilter.set(false);
     const to = new Date();
     const from = new Date();
     from.setDate(from.getDate() - 30);
@@ -33,6 +37,8 @@
   function showFavorites() {
     searchQuery.set('');
     selectedTag.clear();
+    selectedAuthor.clear();
+    hasMediaFilter.set(false);
     dateRange.clear();
     viewMode.set('favorites');
   }
@@ -40,13 +46,17 @@
   function clearAllFilters() {
     searchQuery.set('');
     selectedTag.clear();
+    selectedAuthor.clear();
     dateRange.clear();
+    hasMediaFilter.set(false);
     viewMode.set('all');
   }
 
   function clearChip(id: string) {
     if (id === 'search') searchQuery.set('');
     if (id === 'tag') selectedTag.clear();
+    if (id === 'author') selectedAuthor.clear();
+    if (id === 'hasMedia') hasMediaFilter.set(false);
     if (id === 'recent') {
       dateRange.clear();
       viewMode.set('all');
@@ -62,7 +72,9 @@
   const activeFilterCount = $derived([
     searchQuery.value ? 1 : 0,
     selectedTag.value ? 1 : 0,
+    selectedAuthor.value ? 1 : 0,
     dateRange.value.from ? 1 : 0,
+    hasMediaFilter.value ? 1 : 0,
     viewMode.value === 'favorites' ? 1 : 0,
     viewMode.value === 'recent' ? 1 : 0,
   ].reduce((total, current) => total + current, 0));
@@ -83,6 +95,8 @@
     const chips: { id: string; label: string }[] = [];
     if (searchQuery.value) chips.push({ id: 'search', label: `Search: ${searchQuery.value}` });
     if (selectedTag.value) chips.push({ id: 'tag', label: `#${selectedTag.value}` });
+    if (selectedAuthor.value) chips.push({ id: 'author', label: `@${selectedAuthor.value}` });
+    if (hasMediaFilter.value) chips.push({ id: 'hasMedia', label: 'Has media' });
     if (viewMode.value === 'favorites') chips.push({ id: 'favorites', label: 'Favorites' });
     if (viewMode.value === 'recent') chips.push({ id: 'recent', label: 'Recent 30 days' });
     if (viewMode.value !== 'recent' && dateRange.value.from && dateRange.value.to) {
@@ -100,6 +114,25 @@
     { id: 'recent', label: 'Recent', action: showRecent },
     { id: 'favorites', label: 'Favorites', action: showFavorites },
   ] as const;
+
+  let sentinelEl = $state<HTMLDivElement | undefined>(undefined);
+
+  $effect(() => {
+    const el = sentinelEl;
+    if (!el) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting && !isLoadingMore.value && !isLoading.value && feedMeta.value.hasMore) {
+          void loadMoreBookmarks();
+        }
+      },
+      { rootMargin: '400px' },
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
 
   const currentTrace = $derived(invokeDiagnostics.value.current);
   const recentTraceHistory = $derived(invokeDiagnostics.value.history.slice(0, 4));
@@ -149,6 +182,16 @@
               {/each}
             </div>
             <DateRangePicker />
+            <button
+              class={`ghost-button transition-colors ${hasMediaFilter.value ? 'border-border-accent text-accent' : ''}`}
+              onclick={() => hasMediaFilter.set(!hasMediaFilter.value)}
+              title="Show only bookmarks with media"
+            >
+              <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              <span>Has media</span>
+            </button>
             <LayoutSwitcher />
           </div>
         </div>
@@ -272,15 +315,12 @@
         {/if}
 
         {#if feedMeta.value.hasMore}
-          <div class="mt-6 flex justify-center">
-            <button class="ghost-button min-w-44" onclick={loadMoreBookmarks} disabled={isLoadingMore.value}>
-              {#if isLoadingMore.value}
-                Loading more…
-              {:else}
-                Load more
-              {/if}
-            </button>
-          </div>
+          <div bind:this={sentinelEl} class="mt-6 h-1" aria-hidden="true"></div>
+          {#if isLoadingMore.value}
+            <div class="mt-4 flex justify-center">
+              <div class="h-5 w-5 animate-spin rounded-full border-2 border-accent border-t-transparent"></div>
+            </div>
+          {/if}
         {/if}
       </section>
     </div>

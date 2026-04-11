@@ -14,6 +14,7 @@ import {
   bookmarks,
   dateRange,
   feedMeta,
+  hasMediaFilter,
   isLoading,
   isLoadingMore,
   isRefreshing,
@@ -21,6 +22,7 @@ import {
   libraryDiagnostics,
   loadError,
   searchQuery,
+  selectedAuthor,
   selectedTag,
   stats,
   viewMode,
@@ -111,7 +113,7 @@ let previewRequests = 0;
 const previewWaiters: Array<() => void> = [];
 const previewCache = new Map<string, Promise<LinkPreview | null>>();
 
-function normalizeExternalUrl(
+export function normalizeExternalUrl(
   url: string,
   options: { requirePublicHost?: boolean } = {},
 ): string | null {
@@ -450,6 +452,15 @@ function normalizeDemoFilters(filters: SearchFilters): Bookmark[] {
     filtered = filtered.filter((bookmark) => bookmark.is_favorite);
   }
 
+  if (filters.author) {
+    const author = filters.author.toLowerCase().replace(/^@/, '');
+    filtered = filtered.filter(
+      (bookmark) =>
+        bookmark.author_handle.toLowerCase() === author ||
+        bookmark.author_name.toLowerCase().includes(author),
+    );
+  }
+
   if (filters.hasMedia) {
     filtered = filtered.filter((bookmark) => bookmark.media.length > 0);
   }
@@ -574,16 +585,20 @@ export async function loadMoreBookmarks() {
     const activeFilters: SearchFilters = {
       query: searchQuery.value || undefined,
       tag: selectedTag.value || undefined,
+      author: selectedAuthor.value || undefined,
       fromDate: dateRange.value.from || recent?.from,
       toDate: dateRange.value.to || recent?.to,
       favoritesOnly: viewMode.value === 'favorites',
+      hasMedia: hasMediaFilter.value || undefined,
     };
     const hasActiveFilters = Boolean(
       activeFilters.query ||
         activeFilters.tag ||
+        activeFilters.author ||
         activeFilters.fromDate ||
         activeFilters.toDate ||
-        activeFilters.favoritesOnly,
+        activeFilters.favoritesOnly ||
+        activeFilters.hasMedia,
     );
 
     if (hasActiveFilters) {
@@ -913,17 +928,21 @@ export async function refreshBookmarks(): Promise<void> {
   const filters: SearchFilters = {
     query: searchQuery.value || undefined,
     tag: selectedTag.value || undefined,
+    author: selectedAuthor.value || undefined,
     fromDate: dateRange.value.from || recent?.from,
     toDate: dateRange.value.to || recent?.to,
     favoritesOnly: viewMode.value === 'favorites',
+    hasMedia: hasMediaFilter.value || undefined,
   };
 
   const hasActiveFilters = Boolean(
     filters.query ||
       filters.tag ||
+      filters.author ||
       filters.fromDate ||
       filters.toDate ||
-      filters.favoritesOnly,
+      filters.favoritesOnly ||
+      filters.hasMedia,
   );
 
   if (hasActiveFilters) {

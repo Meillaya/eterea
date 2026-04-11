@@ -31,6 +31,8 @@ Thumbs.db
 
 # OMX runtime state
 .omx/
+.omc/
+src/frontend/.omc/
 
 # Environment
 .env

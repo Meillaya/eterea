@@ -1,0 +1,19 @@
+[package]
+name = "eterea-app"
+version = "0.1.0"
+edition = "2021"
+description = "Shared application services for Eterea"
+license = "MIT"
+
+[lib]
+name = "eterea_app"
+path = "src/lib.rs"
+
+[dependencies]
+eterea-core = { path = "../backend" }
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+tempfile = "3.0"

@@ -1,25 +1,20 @@
 # Eterea
 
-Local-first X/Twitter bookmark manager built with Rust, Tauri, and Svelte.
+Local-first X/Twitter bookmark manager built with Rust and Dioxus.
 
 ## What it does
-- imports bookmarks from CSV, JSON, X archive JS, or direct X sync
+- imports bookmarks from CSV, JSON, or X archive JS files
 - stores everything locally in SQLite
-- supports search, tags, favorites, date filters, and Focus / Grid / List views
+- supports search, top-tag filtering, favorites, and Focus / Grid / List views
 
 ## Dev
 ```bash
-cd src/frontend && bun install
-export ETEREA_X_CLIENT_ID=your_x_app_client_id # optional, for direct X import
-cd ../..
-cargo tauri dev
+cargo run -p eterea-dioxus
 ```
 
 ## Build
 ```bash
-cd src/frontend && bun install
-cd ../..
-cargo tauri build
+cargo build --workspace
 ```
 
 ## Verify
@@ -27,12 +22,12 @@ cargo tauri build
 cargo test --workspace
 cargo check --workspace
 cargo clippy --workspace --all-targets -- -A dead_code
-cd src/frontend && bun test
-cd src/frontend && bun run check
-cd src/frontend && bun run build
+cargo build -p eterea-dioxus
 ```
 
 ## Notes
-- direct X import requires `ETEREA_X_CLIENT_ID`
+- the desktop MVP keeps the existing local SQLite storage
 - data stays local after import
-- database location follows the platform app-data directory used by Tauri
+- the database location follows the platform app-data directory from the Rust backend (`dirs::data_local_dir()/eterea/bookmarks.db`)
+- direct X sync remains deferred for this first Dioxus pass
+- browser companion/server mode remains a planned follow-on phase

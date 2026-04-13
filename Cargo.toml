@@ -2,7 +2,8 @@
 resolver = "2"
 members = [
     "src/backend",
-    "src-tauri"
+    "src/app",
+    "src/dioxus-app"
 ]
 
 [workspace.package]
@@ -15,4 +16,3 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
-

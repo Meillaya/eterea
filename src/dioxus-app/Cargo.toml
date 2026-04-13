@@ -1,0 +1,12 @@
+[package]
+name = "eterea-dioxus"
+version = "0.1.0"
+edition = "2021"
+description = "Dioxus desktop shell for Eterea"
+license = "MIT"
+
+[dependencies]
+dioxus = { version = "0.7", features = ["desktop"] }
+eterea-app = { path = "../app" }
+eterea-core = { path = "../backend" }
+chrono = { version = "0.4", features = ["serde"] }

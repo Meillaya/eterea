@@ -17,11 +17,7 @@ pkgs.mkShell {
     # SQLite development files
     sqlite
 
-    # Node/Bun for frontend
-    bun
-    nodejs_20
-
-    # Tauri dependencies (Linux/GTK)
+    # Dioxus desktop dependencies (Linux/GTK/WebKit)
     webkitgtk_4_1
     gtk3
     libsoup_3
@@ -40,9 +36,9 @@ pkgs.mkShell {
     echo "Eterea development environment"
     echo ""
     echo "Commands:"
-    echo "  cargo build -p eterea-core    # Build Rust backend"
-    echo "  cd src/frontend && bun install # Install frontend deps"
-    echo "  cargo tauri dev               # Run full app"
+    echo "  cargo build --workspace       # Build the desktop MVP + shared services"
+    echo "  cargo run -p eterea-dioxus    # Run the Dioxus desktop app"
+    echo "  cargo test --workspace        # Run regression and migration guardrail tests"
     echo ""
   '';
 

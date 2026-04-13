@@ -1,95 +1,47 @@
 # Bookmark load performance + stats reliability
 
-This note documents the approved direction from `.omx/plans/prd-db-load-performance.md`, plus the code-review guardrails that should stay true while the load-path work is implemented and maintained.
+> Historical note: this document was written while the app still used the
+> Tauri/Svelte shell. The core backend observations remain useful, but any
+> references to `src-tauri` or `src/frontend` are historical and not part of the
+> active app path anymore.
 
-## Scope
+## What still matters
 
-The goal is deliberately narrow:
+These performance principles still apply to the current Rust + Dioxus app:
 
-- make the initial bookmark library load feel fast on a local database
-- keep bookmark visibility reliable on first load and refresh
-- stop the stats page from hanging in a loading state
-- avoid unrelated UI or architecture churn
+1. bookmark list reads should stay independent from heavyweight aggregate work
+2. hydration should avoid N+1-style per-bookmark fetch loops
+3. visible bookmark content should appear before secondary/summary data
+4. stats/error/loading flows should always settle into a terminal state
+5. cached/local-first behavior should prefer visible content over blank-screen loading
 
-## Review snapshot: hotspots worth protecting
+## Active code areas
 
-### 1. Avoid coupling list fetches to full stats reads
-
-`src-tauri/src/lib.rs` currently derives pagination metadata for `get_bookmarks` by calling `db.get_stats()` after the list query. That makes every primary list read depend on the heavier stats path.
-
-**Guardrail:** keep `get_bookmarks` pagination metadata independent from the full stats aggregation path.
-
-### 2. Avoid per-bookmark hydration loops
-
-`src/backend/src/storage/database.rs` currently calls `load_bookmark_tags()` and `load_bookmark_media()` once per bookmark inside `hydrate_bookmarks()`. That is an N+1-style pattern on the hottest read path.
-
-**Guardrail:** batch or pre-group tag/media hydration for list reads so a larger library does not multiply round trips per bookmark.
-
-### 3. Prioritize first bookmark paint over secondary data
-
-`src/frontend/src/routes/+page.svelte` currently awaits `loadStats()` before `refreshBookmarks()` during `onMount()`. That means the home screen can delay the first visible bookmark render behind stats work.
-
-**Guardrail:** the home route should prioritize bookmark visibility first, then allow stats to complete independently.
-
-### 4. Stats views must always reach a terminal state
-
-`src/frontend/src/routes/stats/+page.svelte` is responsible for showing success, empty, or retryable error UI. Any future stats-loading changes should preserve that contract.
-
-**Guardrail:** the stats route must always settle into one of these states:
-
-- data rendered
-- empty-state rendered
-- retryable error rendered
-
-Never reintroduce an unbounded spinner state.
-
-### 5. Cached local data should paint before background refresh
-
-The app now persists a local snapshot of the first bookmark page and recent stats so the library can paint immediately on startup, then refresh in the background.
-
-**Guardrail:** keep snapshot hydration lightweight and preserve visible content while revalidating in the background. Do not regress to blank-screen-first loading when cached local data exists.
-
-### 6. Link previews are strictly best-effort
-
-Bookmark cards can reference many external links, so preview fetching must never become the bottleneck for showing the library itself.
-
-**Guardrail:** keep link previews lazy, concurrency-limited, and timeout-bounded. A plain link fallback is preferable to a long or unbounded preview loader.
-
-## Expected behavior after the performance work
-
-When this work is complete, maintainers should be able to rely on the following behavior:
-
-1. The bookmark library begins loading immediately on entry.
-2. Bookmark visibility is not blocked by stats aggregation.
-3. Pagination metadata does not require a full stats refresh.
-4. Stats loading failures degrade to a terminal error state instead of an infinite loader.
-5. Search, filters, favorites, and refresh continue to behave correctly after the faster load path lands.
-6. Cached content paints immediately when available, while refresh happens unobtrusively in the background.
-7. Link previews enhance visible cards without delaying first paint or hanging indefinitely.
+- backend storage/query path: `src/backend/src/storage/database.rs`
+- shared service layer: `src/app/src/services/app.rs`
+- active desktop shell: `src/dioxus-app/src/app.rs`
 
 ## Verification checklist
-
-Use the same checks called out in `.omx/plans/test-spec-db-load-performance.md`:
 
 ### Automated
 
 - `cargo test --workspace`
 - `cargo check --workspace`
 - `cargo clippy --workspace --all-targets -- -A dead_code`
-- `cd src/frontend && bun run check`
-- `cd src/frontend && bun run build`
+- `cargo build --workspace`
 
 ### Targeted manual verification
 
-- Measure bookmark list query + hydration timing before and after the change on a populated local DB.
-- Confirm the home route shows bookmarks before stats finish loading.
-- Confirm refresh/reset/view changes stay responsive.
-- Confirm the stats route reaches success, empty, or retryable error; never an infinite loading state.
-- Confirm loaded bookmarks still include complete tags/media data.
-- Confirm search, filter, and favorites behavior still match the underlying data.
+- Confirm the library loads promptly from a populated local DB.
+- Confirm import, browse, and search/filter remain responsive.
+- Confirm the desktop app does not block core content behind secondary status work.
+- Confirm persisted data still appears after restart.
 
 ## Maintenance notes
 
-- Do not recouple bookmark pagination to `get_stats()` without re-measuring the hot path.
-- Do not accept a faster list load if it drops tags, media, or bookmark completeness.
-- If rendering remains the dominant bottleneck after backend fixes, treat render/windowing as a follow-up pass instead of widening this change unnecessarily.
+- Do not recouple hot list reads to heavyweight aggregate work without
+  re-measuring the path.
+- Do not regress the active app path back to a blank-screen-first loading model
+  when cached/local data is available.
+- Treat old Tauri/Svelte-specific profiling notes as historical implementation
+  context only.

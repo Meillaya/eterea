@@ -37,6 +37,7 @@
           webkitgtk_4_1
           gtk3
           libsoup_3
+          xdotool
           gdk-pixbuf
           pango
           cairo
@@ -75,6 +76,7 @@
               pkgs.openssl
               pkgs.webkitgtk_4_1
               pkgs.gtk3
+              pkgs.xdotool
             ]
           );
 
@@ -87,7 +89,7 @@
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
           nativeBuildInputs = with pkgs; [ pkg-config ];
-          buildInputs = with pkgs; [ sqlite openssl ];
+          buildInputs = with pkgs; [ sqlite openssl xdotool ];
           meta = with pkgs.lib; {
             description = "Lightning-fast Twitter bookmarks manager";
             license = licenses.mit;

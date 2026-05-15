@@ -1,6 +1,6 @@
 //! SQLite database implementation
 
-use super::queries::BookmarkStats;
+use super::queries::{AuthorStats, BookmarkStats};
 use super::schema::{PRAGMAS, SCHEMA};
 use crate::models::{Bookmark, Media, MediaType};
 use crate::{Error, Result};
@@ -175,7 +175,10 @@ END;
             }
         }
 
-        self.refresh_stats_snapshot()?;
+        if let Err(error) = self.refresh_stats_snapshot() {
+            let _ = conn.execute("ROLLBACK", []);
+            return Err(error);
+        }
         conn.execute("COMMIT", [])?;
         Ok(count)
     }
@@ -805,6 +808,35 @@ END;
         }
 
         Ok(media_by_bookmark)
+    }
+
+    /// Get author directory summaries ordered by bookmark count.
+    pub fn get_all_authors(&self) -> Result<Vec<AuthorStats>> {
+        let mut stmt = self.conn.prepare(
+            r#"SELECT author_handle,
+                      COALESCE(NULLIF(author_name, ''), author_handle) AS author_name,
+                      MAX(author_profile_image) AS author_profile_image,
+                      COUNT(*) AS bookmark_count,
+                      SUM(CASE WHEN is_favorite = 1 THEN 1 ELSE 0 END) AS favorite_count
+               FROM bookmarks
+               GROUP BY author_handle
+               ORDER BY bookmark_count DESC, author_handle ASC"#,
+        )?;
+
+        let authors = stmt
+            .query_map([], |row| {
+                Ok(AuthorStats {
+                    handle: row.get(0)?,
+                    name: row.get(1)?,
+                    profile_image: row.get(2)?,
+                    bookmark_count: row.get(3)?,
+                    favorite_count: row.get(4)?,
+                })
+            })?
+            .filter_map(|row| row.ok())
+            .collect();
+
+        Ok(authors)
     }
 
     /// Get all unique tags with counts

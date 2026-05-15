@@ -52,4 +52,42 @@ impl BookmarkQuery {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AuthorSummary {
+    pub handle: String,
+    pub name: String,
+    pub profile_image: Option<String>,
+    pub bookmark_count: i64,
+    pub favorite_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TopicSummary {
+    pub tag: String,
+    pub bookmark_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ImportPreviewItem {
+    pub author_handle: String,
+    pub content: String,
+    pub tag_count: usize,
+    pub has_media: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ImportPreview {
+    pub source_label: String,
+    pub format: String,
+    pub bookmark_count: usize,
+    pub sample: Vec<ImportPreviewItem>,
+    pub duplicate_policy: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ImportSummary {
+    pub preview: ImportPreview,
+    pub imported_count: usize,
+}
+
 pub type BookmarkPage = PaginatedResponse<Bookmark>;

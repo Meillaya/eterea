@@ -5,5 +5,4 @@
 
 mod bookmark;
 
-pub use bookmark::{Bookmark, BookmarkBuilder, Media, MediaType, Author};
-
+pub use bookmark::{Author, Bookmark, BookmarkBuilder, Media, MediaType};

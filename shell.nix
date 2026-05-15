@@ -21,6 +21,7 @@ pkgs.mkShell {
     webkitgtk_4_1
     gtk3
     libsoup_3
+    xdotool
     gdk-pixbuf
     pango
     cairo
@@ -51,5 +52,6 @@ pkgs.mkShell {
     pkgs.openssl
     pkgs.webkitgtk_4_1
     pkgs.gtk3
+    pkgs.xdotool
   ];
 }

@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Eterea — Terminal Archive (full app)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap"
+  rel="stylesheet"
+/>
+<style>
+  html, body, #root { height: 100%; margin: 0; }
+  body { background: #11111b; }
+  ::selection { background: rgba(245,194,231,0.35); }
+  #root { outline: none; }
+  *::-webkit-scrollbar { width: 8px; height: 8px; }
+  *::-webkit-scrollbar-track { background: transparent; }
+  *::-webkit-scrollbar-thumb { background: #313244; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div id="root" tabindex="0"></div>
+
+<template id="__bundler_thumbnail">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+    <rect width="100" height="100" fill="#1e1e2e"/>
+    <text x="50" y="62" text-anchor="middle" font-family="JetBrains Mono, ui-monospace, monospace" font-size="36" font-weight="700" fill="#f5c2e7">▮</text>
+  </svg>
+</template>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="mock-data.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="c-system.jsx"></script>
+<script type="text/babel" src="c-chrome.jsx"></script>
+<script type="text/babel" src="c-views.jsx"></script>
+<script type="text/babel" src="c-screens.jsx"></script>
+
+<script type="text/babel">
+  const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+    "themeKey": "mocha",
+    "fontKey": "jetbrains",
+    "density": "regular",
+    "weight": "regular",
+    "accentKey": "pink",
+    "view": "table"
+  }/*EDITMODE-END*/;
+
+  const ACCENT_MAP = {
+    pink:  (t) => t.accent,
+    blue:  (t) => t.blue,
+    green: (t) => t.green,
+    peach: (t) => t.peach,
+    mauve: (t) => t.mauve,
+    yellow:(t) => t.yellow,
+  };
+
+  const PALETTE_ITEMS = [
+    { id: "go-library", label: "Go to: Library",    sub: "tab",    icon: "▶", kbd: "1", screen: "library" },
+    { id: "go-authors", label: "Go to: Authors",    sub: "tab",    icon: "▶", kbd: "2", screen: "authors" },
+    { id: "go-topics",  label: "Go to: Topics",     sub: "tab",    icon: "▶", kbd: "3", screen: "topics" },
+    { id: "go-search",  label: "Go to: Search",     sub: "tab",    icon: "/", kbd: "4", screen: "search" },
+    { id: "go-import",  label: "Go to: Import",     sub: "tab",    icon: "⇣", kbd: "5", screen: "import" },
+    { id: "go-settings",label: "Go to: Settings",   sub: "tab",    icon: "⚙", kbd: "6", screen: "settings" },
+    { id: "go-detail",  label: "Open: Entry detail",sub: "screen", icon: "▤",          screen: "detail" },
+    { id: "go-onboard", label: "Open: Onboarding",  sub: "screen", icon: "▤",          screen: "onboarding" },
+    { id: "view-table", label: "View: Table",       sub: "library", icon: "≡",          view: "table",     screen: "library", keywords: "list rows" },
+    { id: "view-tree",  label: "View: Tree by author", sub: "library", icon: "▾",      view: "tree",      screen: "library", keywords: "group authors" },
+    { id: "view-dash",  label: "View: Dashboard",   sub: "library", icon: "▦",          view: "dashboard", screen: "library", keywords: "stats overview" },
+    { id: "view-graph", label: "View: Tag graph",   sub: "library", icon: "◯",          view: "graph",     screen: "library", keywords: "network nodes" },
+    { id: "view-cal",   label: "View: Calendar heatmap", sub: "library", icon: "▣",     view: "calendar",  screen: "library", keywords: "history time" },
+    { id: "theme-mocha",label: "Theme: Mocha",      sub: "appearance", icon: "●",       theme: "mocha" },
+    { id: "theme-macc", label: "Theme: Macchiato",  sub: "appearance", icon: "●",       theme: "macchiato" },
+    { id: "theme-latte",label: "Theme: Latte",      sub: "appearance", icon: "○",       theme: "latte" },
+    { id: "fav-toggle", label: "Toggle: Favorite",  sub: "action",     icon: "★", kbd: "f" },
+    { id: "yank",       label: "Yank: Selected text", sub: "action",   icon: "✂", kbd: "y" },
+    { id: "import-now", label: "Import: From X archive", sub: "action", icon: "⇣", screen: "import" },
+    { id: "help",       label: "Help: Keybindings", sub: "overlay",    icon: "?", kbd: "?" },
+  ];
+
+  function App() {
+    const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+    const theme = cTheme(t.themeKey);
+    const font = cFont(t.fontKey);
+    const accent = (ACCENT_MAP[t.accentKey] || ACCENT_MAP.pink)(theme);
+    const weightStyle = t.weight === "bold" ? { fontWeight: 600 } : null;
+
+    const [screen, setScreen] = React.useState("library");
+    const [view, setView]     = React.useState(t.view || "table");
+    const [selectedIdx, setSelectedIdx] = React.useState(0);
+    const [multi, setMulti]   = React.useState(new Set());
+    const [mode, setMode]     = React.useState("NORMAL");
+    const [command, setCommand] = React.useState("");
+    const [searchQuery, setSearchQuery] = React.useState("rust");
+    const [palette, setPalette] = React.useState(false);
+    const [paletteQ, setPaletteQ] = React.useState("");
+    const [paletteSel, setPaletteSel] = React.useState(0);
+    const [showHelp, setShowHelp] = React.useState(false);
+    const [history, setHistory] = React.useState(["library"]);
+
+    React.useEffect(() => { setView(t.view); }, [t.view]);
+
+    const navigate = (s) => {
+      setScreen(s);
+      setHistory(h => [...h, s]);
+    };
+
+    const items = BOOKMARKS;
+
+    // Top bar / sidebar click delegate
+    const onClick = (e) => {
+      const tab = e.target.closest("[data-screen]");
+      if (tab) { e.preventDefault(); navigate(tab.dataset.screen); }
+    };
+
+    // Auto-focus root so keyboard works immediately
+    React.useEffect(() => {
+      document.getElementById("root").focus();
+    }, []);
+
+    // Global key handler
+    React.useEffect(() => {
+      const onKey = (e) => {
+        if (e.target.matches("input, textarea")) return;
+        if (mode === "COMMAND" || mode === "SEARCH") return;
+        if (palette || showHelp) {
+          if (e.key === "Escape") { setShowHelp(false); setPalette(false); }
+          return;
+        }
+
+        if (e.key === "?")  { setShowHelp(true); return; }
+        if (e.key === "Escape") { setMulti(new Set()); setMode("NORMAL"); return; }
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "p") { e.preventDefault(); setPalette(true); setPaletteQ(""); return; }
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPalette(true); setPaletteQ(""); return; }
+        if (e.key === "/") { e.preventDefault(); setMode("SEARCH"); setCommand(""); return; }
+        if (e.key === ":") { e.preventDefault(); setMode("COMMAND"); setCommand(""); return; }
+        if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); setSelectedIdx(i => Math.min(items.length - 1, i + 1)); }
+        if (e.key === "k" || e.key === "ArrowUp")   { e.preventDefault(); setSelectedIdx(i => Math.max(0, i - 1)); }
+        if (e.key === "G") { setSelectedIdx(items.length - 1); }
+        if (e.key === "g" && !e.shiftKey) { setSelectedIdx(0); }
+        if (e.key === "o" || e.key === "Enter") { navigate("detail"); }
+        if (e.key === " ") {
+          e.preventDefault();
+          setMulti(s => { const n = new Set(s); const id = items[selectedIdx]?.id; if (n.has(id)) n.delete(id); else n.add(id); return n; });
+        }
+        if (e.key === "v") { setMode(m => m === "VISUAL" ? "NORMAL" : "VISUAL"); }
+        if (e.key === "f" && screen === "library") { /* favorite toggle stub */ }
+        if (e.key === "1") navigate("library");
+        if (e.key === "2") navigate("authors");
+        if (e.key === "3") navigate("topics");
+        if (e.key === "4") navigate("search");
+        if (e.key === "5") navigate("import");
+        if (e.key === "6") navigate("settings");
+      };
+      window.addEventListener("keydown", onKey);
+      return () => window.removeEventListener("keydown", onKey);
+    }, [mode, selectedIdx, items.length, palette, showHelp, screen]);
+
+    const runCommand = (kind) => {
+      if (kind === "cancel") { setMode("NORMAL"); setCommand(""); return; }
+      const c = command.trim();
+      if (mode === "SEARCH") {
+        setSearchQuery(c);
+        navigate("search");
+      } else if (mode === "COMMAND") {
+        if (c.startsWith("view ")) { const v = c.slice(5); setView(v); setTweak("view", v); navigate("library"); }
+        else if (c.startsWith("theme ")) { setTweak("themeKey", c.slice(6)); }
+        else if (c.startsWith("accent ")) { setTweak("accentKey", c.slice(7)); }
+        else if (c.startsWith("font ")) { setTweak("fontKey", c.slice(5)); }
+        else if (c === "help" || c === "?") { setShowHelp(true); }
+        else if (c === "q" || c === "quit") { /* no-op */ }
+        else if (["library","authors","topics","search","import","settings","detail","onboarding"].includes(c)) navigate(c);
+      }
+      setMode("NORMAL"); setCommand("");
+    };
+
+    const onPalettePick = (it) => {
+      if (it.view)   { setView(it.view); setTweak("view", it.view); }
+      if (it.theme)  setTweak("themeKey", it.theme);
+      if (it.id === "help") setShowHelp(true);
+      if (it.screen) navigate(it.screen);
+      setPalette(false);
+    };
+
+    const statusline = {
+      left: screen === "library"
+        ? `library/${view} · ${items.length} entries · sort:tweeted_at desc`
+        : screen === "search"
+        ? `/${searchQuery || "_"}`
+        : `screen: ${screen}`,
+      right: `${selectedIdx + 1}/${items.length}  ·  ${t.themeKey}  ·  Ln ${selectedIdx + 1}  Col 1`,
+    };
+
+    let body;
+    if (screen === "library") {
+      if (view === "table")          body = <CTableView theme={theme} font={font} density={t.density} items={items} selected={selectedIdx} multi={multi} accent={accent} onSelect={setSelectedIdx} />;
+      else if (view === "tree")      body = <CTreeView theme={theme} items={items} accent={accent} selected={selectedIdx} onSelect={setSelectedIdx} />;
+      else if (view === "dashboard") body = <CDashboardView theme={theme} items={items} accent={accent} />;
+      else if (view === "graph")     body = <CGraphView theme={theme} accent={accent} />;
+      else if (view === "calendar")  body = <CCalendarView theme={theme} accent={accent} />;
+    } else if (screen === "detail") {
+      body = <CDetailScreen theme={theme} accent={accent} items={items} selectedIdx={selectedIdx} setSelectedIdx={setSelectedIdx} />;
+    } else if (screen === "authors") {
+      body = <CAuthorScreen theme={theme} accent={accent} handle="karpathy" />;
+    } else if (screen === "topics") {
+      body = <CTagScreen theme={theme} accent={accent} tag="rust" />;
+    } else if (screen === "search") {
+      body = <CSearchScreen theme={theme} accent={accent} query={searchQuery} setQuery={setSearchQuery} />;
+    } else if (screen === "import") {
+      body = <CImportScreen theme={theme} accent={accent} />;
+    } else if (screen === "settings") {
+      body = <CSettingsScreen
+        theme={theme} accent={accent} font={font}
+        fontKey={t.fontKey} setFontKey={(v) => setTweak("fontKey", v)}
+        density={t.density} setDensity={(v) => setTweak("density", v)}
+        themeKey={t.themeKey} setThemeKey={(v) => setTweak("themeKey", v)}
+        weight={t.weight} setWeight={(v) => setTweak("weight", v)}
+        accentKey={t.accentKey} setAccentKey={(v) => setTweak("accentKey", v)}
+      />;
+    } else if (screen === "onboarding") {
+      body = <COnboardingScreen theme={theme} accent={accent} font={font} onBegin={() => navigate("import")} />;
+    }
+
+    return (
+      <>
+        <div onClick={onClick} style={{ width: "100vw", height: "100vh", overflow: "hidden", ...(weightStyle || {}) }}>
+          <CShell
+            theme={theme} font={font}
+            mode={mode}
+            statusline={statusline}
+            command={command} setCommand={setCommand}
+            onCommand={runCommand}
+            currentScreen={screen}
+            multiSelect={multi.size}
+          >
+            {body}
+          </CShell>
+          {palette && (
+            <CPalette
+              theme={theme}
+              query={paletteQ} setQuery={setPaletteQ}
+              items={PALETTE_ITEMS}
+              selected={paletteSel} setSelected={setPaletteSel}
+              onPick={onPalettePick}
+              onClose={() => setPalette(false)}
+            />
+          )}
+          {showHelp && <CKeybindings theme={theme} onClose={() => setShowHelp(false)} />}
+        </div>
+
+        <TweaksPanel>
+          <TweakSection label="Theme" />
+          <TweakRadio label="Catppuccin" value={t.themeKey} options={["mocha", "macchiato", "latte"]} onChange={(v) => setTweak("themeKey", v)} />
+          <TweakSelect label="Accent" value={t.accentKey} options={["pink", "blue", "green", "peach", "mauve", "yellow"]} onChange={(v) => setTweak("accentKey", v)} />
+          <TweakSection label="Type" />
+          <TweakSelect label="Mono font" value={t.fontKey} options={["jetbrains", "iosevka", "plex", "berkeley"]} onChange={(v) => setTweak("fontKey", v)} />
+          <TweakRadio label="Weight" value={t.weight} options={["regular", "bold"]} onChange={(v) => setTweak("weight", v)} />
+          <TweakRadio label="Density" value={t.density} options={["compact", "regular", "comfy"]} onChange={(v) => setTweak("density", v)} />
+        </TweaksPanel>
+      </>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>

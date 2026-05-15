@@ -59,7 +59,10 @@ impl JsonParser {
             }
         }
 
-        debug!("Parsed {} bookmarks from JSON fallback path", bookmarks.len());
+        debug!(
+            "Parsed {} bookmarks from JSON fallback path",
+            bookmarks.len()
+        );
         Ok(bookmarks)
     }
 
@@ -171,7 +174,12 @@ impl JsonParser {
             .or_else(|| {
                 self.extract_string(
                     raw,
-                    &[&["tweet_url"], &["url"], &["expanded_url"], &["expandedUrl"]],
+                    &[
+                        &["tweet_url"],
+                        &["url"],
+                        &["expanded_url"],
+                        &["expandedUrl"],
+                    ],
                 )
                 .and_then(|url| self.extract_handle_from_url(&url))
             })

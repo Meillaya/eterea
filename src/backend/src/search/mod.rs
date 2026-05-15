@@ -11,12 +11,12 @@ pub use highlighter::highlight_matches;
 pub fn extract_snippet(text: &str, query: &str, context_chars: usize) -> String {
     let text_lower = text.to_lowercase();
     let query_lower = query.to_lowercase();
-    
+
     // Find first match
     if let Some(pos) = text_lower.find(&query_lower) {
         let start = pos.saturating_sub(context_chars);
         let end = (pos + query.len() + context_chars).min(text.len());
-        
+
         let mut snippet = String::new();
         if start > 0 {
             snippet.push_str("...");
@@ -25,7 +25,7 @@ pub fn extract_snippet(text: &str, query: &str, context_chars: usize) -> String 
         if end < text.len() {
             snippet.push_str("...");
         }
-        
+
         snippet
     } else {
         // No match, return beginning of text
@@ -40,7 +40,7 @@ pub fn extract_snippet(text: &str, query: &str, context_chars: usize) -> String 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_extract_snippet() {
         let text = "This is a long piece of text about Rust programming language and its benefits.";
@@ -49,4 +49,3 @@ mod tests {
         assert!(snippet.contains("..."));
     }
 }
-

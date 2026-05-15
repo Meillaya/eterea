@@ -188,7 +188,10 @@ fn import_all(dry_run: bool) {
         total_elapsed.as_secs_f64()
     );
     if total_skipped > 0 {
-        println!("   ↷ Skipped {} duplicates/already-imported bookmarks", total_skipped);
+        println!(
+            "   ↷ Skipped {} duplicates/already-imported bookmarks",
+            total_skipped
+        );
     }
 
     if dry_run {
@@ -200,10 +203,7 @@ fn import_file(path: &Path, dry_run: bool) {
     match import_single_file(path, dry_run) {
         Ok(summary) => {
             if dry_run {
-                println!(
-                    "✅ Would import {} bookmarks (dry run)",
-                    summary.imported
-                );
+                println!("✅ Would import {} bookmarks (dry run)", summary.imported);
             }
         }
         Err(e) => {

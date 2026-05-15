@@ -3,6 +3,16 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// Author directory row, denormalized from bookmarks for product screens.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AuthorStats {
+    pub handle: String,
+    pub name: String,
+    pub profile_image: Option<String>,
+    pub bookmark_count: i64,
+    pub favorite_count: i64,
+}
+
 /// Database statistics
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct BookmarkStats {

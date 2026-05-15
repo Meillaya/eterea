@@ -1,0 +1,3 @@
+profile_image_url_https,screen_name,name,full_text,note_tweet_text,tweeted_at,tweet_url
+https://example.com/rust.png,rustacean,Rustacean,"Rust apps need committed lockfiles and clear service seams #rust",,2026-05-04T10:00:00.000Z,https://x.com/rustacean/status/2001
+https://example.com/local.png,localfirst,Local First,"SQLite keeps a personal archive private and fast #localfirst",,2026-05-04T11:00:00.000Z,https://x.com/localfirst/status/2002

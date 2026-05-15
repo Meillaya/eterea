@@ -1,0 +1,35 @@
+[
+  {
+    "bookmark_date": "2026-05-01T12:00:00.000Z",
+    "profile_image_url_https": "https://example.com/ada.png",
+    "screen_name": "ada_dev",
+    "name": "Ada Developer",
+    "full_text": "Rust service boundaries make local-first archives fast and calm #rust #architecture",
+    "tweeted_at": "2026-05-01T10:15:00.000Z",
+    "extended_media": [
+      { "media_url_https": "https://example.com/rust-reading-room.png", "type": "photo" }
+    ],
+    "tweet_url": "https://x.com/ada_dev/status/1001"
+  },
+  {
+    "bookmark_date": "2026-05-02T12:00:00.000Z",
+    "profile_image_url_https": "https://example.com/bea.png",
+    "screen_name": "bea_design",
+    "name": "Bea Design",
+    "full_text": "Editorial layouts should stay truthful to available data #design",
+    "tweeted_at": "2026-05-02T09:30:00.000Z",
+    "tweet_url": "https://x.com/bea_design/status/1002"
+  },
+  {
+    "bookmark_date": "2026-05-03T12:00:00.000Z",
+    "profile_image_url_https": "https://example.com/cy.png",
+    "screen_name": "cy_ops",
+    "name": "Cy Ops",
+    "full_text": "Release checklists are better when verification commands are reproducible #ops",
+    "tweeted_at": "2026-05-03T08:45:00.000Z",
+    "extended_media": [
+      { "media_url_https": "https://example.com/checklist.png", "type": "photo" }
+    ],
+    "tweet_url": "https://x.com/cy_ops/status/1003"
+  }
+]

@@ -1,8 +1,8 @@
-# Eterea Full-App Release Readiness
+# Release readiness
 
-Status: Milestone 11 release-readiness pass prepared on 2026-05-15.
+Status: production-candidate desktop app as of 2026-05-15.
 
-## Scope shipped by this plan
+## Scope currently implemented
 
 - Dioxus desktop shell for the Editorial Reading Room design direction.
 - Local-first bookmark import from CSV, JSON, and X archive JS.
@@ -12,17 +12,16 @@ Status: Milestone 11 release-readiness pass prepared on 2026-05-15.
 - Empty/onboarding, error states, honest session-only appearance settings, and session-only remote tweet image previews hidden by default.
 - Service guardrails for import/query/favorite/delete/persistence/detail/directory APIs.
 - Performance baseline and 10k budget regression test.
-- Visual, accessibility, and performance OMX evidence artifacts.
+- Visual, accessibility, and performance evidence artifacts from the current readiness pass.
 
 ## Final verification commands
 
 Run from the repository root:
 
 ```bash
-nix develop -c cargo fmt --all
+nix develop -c cargo fmt --all -- --check
+nix develop -c cargo clippy --workspace --all-targets -- -D warnings
 nix develop -c cargo test --workspace
-nix develop -c cargo check --workspace
-nix develop -c cargo clippy --workspace --all-targets -- -A dead_code
 nix develop -c cargo build -p eterea-dioxus
 nix develop -c cargo test -p eterea-app --test performance_baseline -- --nocapture
 ```
@@ -31,13 +30,11 @@ nix develop -c cargo test -p eterea-app --test performance_baseline -- --nocaptu
 
 | Area | Artifact | Status |
 | --- | --- | --- |
-| Planning | `.omx/plans/prd-eterea-full-app.md` | Complete |
-| Test contract | `.omx/plans/test-spec-eterea-full-app.md` | Complete |
-| Design map | `docs/design-implementation-map.md` | Complete |
+| Design map | `docs/design-system.md` | Current |
+| Architecture docs | `docs/architecture.md` + `docs/development.md` | Current |
 | Accessibility | `.omx/artifacts/accessibility/eterea-full-app/checklist.md` | Static pass complete, including remote media states; live traversal remains final release check |
 | Visual QA | `.omx/artifacts/visual/eterea-full-app/visual-qa-report.md` + verdicts | Accepted-deviation pass, including tweet media states; live screenshot/pixel diff deferred |
 | Performance | `.omx/artifacts/perf/eterea-full-app/optimization-report.md` | 10k budgets pass; 50k/manual desktop-start waivers documented |
-| Codex/OMX ledger | `.omx/ultragoal/ledger.jsonl` | Story checkpoints recorded |
 
 ## Known release risks / waivers
 
@@ -56,8 +53,7 @@ nix develop -c cargo test -p eterea-app --test performance_baseline -- --nocaptu
 ## Go / no-go checklist
 
 - [x] Workspace tests pass under Nix.
-- [x] Workspace check passes under Nix.
-- [x] Workspace clippy passes under Nix with the existing `-A dead_code` allowance.
+- [x] Workspace clippy passes under Nix with `-D warnings`.
 - [x] Dioxus package builds under Nix.
 - [x] Performance report exists with budgets met or waivers documented.
 - [x] Accessibility artifact exists with static pass and live follow-ups.

@@ -1,9 +1,9 @@
 use eterea_app::{AppServices, BookmarkQuery};
 use tempfile::NamedTempFile;
 
-const SAMPLE_JSON: &str = include_str!("../../legacy/new_bookmarks.json");
-const SAMPLE_NEW_CSV: &str = include_str!("../../legacy/new_bookmarks.csv");
-const SAMPLE_LEGACY_CSV: &str = include_str!("../../legacy/legacy_bookmarks.csv");
+const SAMPLE_JSON: &str = include_str!("../../../fixtures/import/bookmarks.json");
+const SAMPLE_NEW_CSV: &str = include_str!("../../../fixtures/import/new_bookmarks.csv");
+const SAMPLE_LEGACY_CSV: &str = include_str!("../../../fixtures/import/legacy_bookmarks.csv");
 
 fn imported_services(filename: &str, content: &str) -> AppServices {
     let services = AppServices::open_memory().expect("in-memory services should open");

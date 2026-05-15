@@ -93,7 +93,7 @@ fn performance_baseline_for_current_service_paths() {
 
     // Loose guardrails catch accidental pathological regressions without making
     // normal development machines fail on small timing variance. Release budgets
-    // are stricter and live in docs/design-implementation-map.md.
+    // are stricter and live in docs/design-system.md.
     assert_bounded(
         "import 500 generated bookmarks",
         import_elapsed,

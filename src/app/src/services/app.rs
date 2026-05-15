@@ -302,7 +302,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     fn sample_json() -> &'static str {
-        include_str!("../../../legacy/new_bookmarks.json")
+        include_str!("../../../../fixtures/import/bookmarks.json")
     }
 
     fn local_boundary(date: NaiveDate, end_of_day: bool) -> DateTime<Utc> {

@@ -1,37 +1,40 @@
-# Eterea Full-App Design Implementation Map
+# Design system and implementation map
 
-This is the Milestone 0 execution contract for turning `design/Eterea - Full App.html` into the Rust/Dioxus desktop app. It freezes the prototype-to-product mapping, visual QA artifact structure, and fixture/performance contract before implementation edits begin.
+This document maps the implemented Rust/Dioxus UI system, runtime modules, verification artifacts, and release guardrails.
 
 ## Source-of-truth inputs
 
+The design folder has been removed. The production source of truth is now the
+implemented Dioxus UI and its tests:
+
 | Input | Role |
 | --- | --- |
-| `design/Eterea - Full App.html` | Canonical full-app prototype shell; loads the React/Babel design files and exposes accent, paper tone, density, and start-screen controls. |
-| `design/b-system.jsx` | Editorial design tokens and primitives: paper tones, serif/mono fonts, masthead, smallcaps, tag rail, colophon. |
-| `design/b-library.jsx` | Core reading layouts and bookmark entry patterns: Issue, Front Page, Long-Read, Spread, inline detail. |
-| `design/b-screens.jsx` | Focused screens: entry detail, author archive, topic page, search, import, settings, onboarding. |
-| `design/b-shell.jsx` | Connected prototype shell: sidebar navigation, screen state, library/favorites/authors/topics/search/import/settings routes. |
-| `.omx/plans/prd-eterea-full-app.md` | Approved milestone plan and staffing/verification guidance. |
-| `.omx/plans/test-spec-eterea-full-app.md` | Test, visual, accessibility, and performance verification contract. |
+| `src/dioxus-app/src/app.rs` | Root desktop shell composition and screen rendering. |
+| `src/dioxus-app/src/app/` | Route, state, action, design-system, component, and screen helpers. |
+| `src/dioxus-app/assets/app.css` | Typography, density, paper-tone, layout, and interaction styling. |
+| `src/app/src/services/app.rs` | Data-backed product operations consumed by the UI. |
+| `src/app/tests/` and Dioxus unit tests | Guardrails for service behavior, routes, media policy, design-system classes, and performance. |
+
+Historical prototype context, if needed, belongs in external design tooling or
+`docs/archive/`; do not recreate a repository-level prototype folder unless it is
+part of the production source tree.
 
 ## Current product anchors
 
 - The active product is local-first Rust/Dioxus, imports CSV/JSON/X archive JS, stores bookmarks in SQLite, and already supports search/filter/favorites/delete/layout switching (`README.md`).
 - Workspace crates are `src/backend`, `src/app`, and `src/dioxus-app`.
-- Current Dioxus UI is intentionally treated as a behavior-preserving MVP baseline, not as the final design architecture.
+- Current Dioxus UI is the active desktop product surface and should remain data-backed rather than mock-backed.
 - `AppServices` is the service boundary for product workflows; do not bypass it from UI screens unless a new product-level method is added there first.
 
 ## Architecture target
 
-Recommended option remains the approved RALPLAN decision: **Dioxus-native rebuild from prototype tokens**.
-
-Target module shape:
+The active implementation follows a Dioxus-native structure with route/state/action helpers split away from the root composition file. Continue evolving toward this shape:
 
 ```text
 src/dioxus-app/src/
   main.rs
+  app.rs                # root composition and service setup
   app/
-    mod.rs              # root composition and service setup
     route.rs            # ScreenRoute enum and route helpers
     state.rs            # AppState, filters, layout, import/settings state
     actions.rs          # service-backed UI actions
@@ -54,36 +57,36 @@ src/dioxus-app/src/
 src/dioxus-app/assets/app.css
 ```
 
-This shape is guidance, not a mandatory file list. The invariant is that route/state/actions/design-system/components/screens are separable enough to prevent another monolithic `app.rs`.
+This shape is guidance, not a mandatory file list. The invariant is that route/state/actions/design-system/components/screens remain separable enough to prevent a monolithic UI module.
 
 ## Route and screen inventory
 
-| Prototype route/screen | Prototype source | Dioxus target | Data/API contract |
+| Product route/screen | UI source | Dioxus target | Data/API contract |
 | --- | --- | --- | --- |
-| `library` | `BApp`, `BLibraryScreen`, `BLayoutIssue/Front/Long/Spread` | `ScreenRoute::Library`, `screens/library.rs` | `AppServices::query_bookmarks`, `AppServices::stats`, pagination. |
-| `favorites` | `BLibraryScreen initialFavOnly` | `ScreenRoute::Favorites`, `screens/favorites.rs` or shared library screen mode | Same query API with `favorites_only=true`. |
-| `authors` | `BAuthorsIndex` | `ScreenRoute::Authors`, `screens/authors.rs` | Add product-level `author_index` returning author summaries. |
-| `topics` | `BTopicsIndex` | `ScreenRoute::Topics`, `screens/topics.rs` | Add product-level `topic_index` returning tag counts. |
-| `search` | `BSearchScreen` | `ScreenRoute::Search`, `screens/search.rs` | Reuse `BookmarkQuery`; add scope support only if cheap/tested. |
-| `import` | `BImportFlow` | `ScreenRoute::Import`, `screens/import.rs` | Add dry-run preview API, then reuse import transaction path. |
-| `settings` | `BScreenSettings` | `ScreenRoute::Settings`, `screens/settings.rs` | Appearance settings must be functional; persistence preferred but not v1-blocking. |
-| `onboarding` | `BScreenOnboarding` | `ScreenRoute::Onboarding`, `screens/onboarding.rs` | Empty DB / first-run route decision. |
-| `entry:{id}` | `BScreenDetail` | `ScreenRoute::Entry(String)`, `screens/detail.rs` | Add `bookmark_detail(id)` product API. |
-| `author:{handle}` | `BScreenAuthor` | `ScreenRoute::Author(String)`, `screens/detail.rs` or `screens/authors.rs` | Add `bookmarks_by_author(handle, page)`. |
-| `topic:{tag}` | `BScreenTag` | `ScreenRoute::Topic(String)`, `screens/detail.rs` or `screens/topics.rs` | Add `bookmarks_by_tag(tag, page)`. |
+| `library` | `src/dioxus-app/src/app.rs` + `app/screens/library.rs` | `ScreenRoute::Library`, `screens/library.rs` | `AppServices::query_bookmarks`, `AppServices::stats`, pagination. |
+| `favorites` | shared library screen mode | `ScreenRoute::Favorites`, `screens/favorites.rs` or shared library screen mode | Same query API with `favorites_only=true`. |
+| `authors` | data-backed directory UI | `ScreenRoute::Authors`, `screens/authors.rs` | Add product-level `author_index` returning author summaries. |
+| `topics` | data-backed topic UI | `ScreenRoute::Topics`, `screens/topics.rs` | Add product-level `topic_index` returning tag counts. |
+| `search` | search route UI | `ScreenRoute::Search`, `screens/search.rs` | Reuse `BookmarkQuery`; add scope support only if cheap/tested. |
+| `import` | import route UI | `ScreenRoute::Import`, `screens/import.rs` | Add dry-run preview API, then reuse import transaction path. |
+| `settings` | settings route UI | `ScreenRoute::Settings`, `screens/settings.rs` | Appearance settings must be functional; persistence preferred but not v1-blocking. |
+| `onboarding` | empty-state/onboarding UI | `ScreenRoute::Onboarding`, `screens/onboarding.rs` | Empty DB / first-run route decision. |
+| `entry:{id}` | detail route UI | `ScreenRoute::Entry(String)`, `screens/detail.rs` | Add `bookmark_detail(id)` product API. |
+| `author:{handle}` | filtered author route UI | `ScreenRoute::Author(String)`, `screens/detail.rs` or `screens/authors.rs` | Add `bookmarks_by_author(handle, page)`. |
+| `topic:{tag}` | filtered topic route UI | `ScreenRoute::Topic(String)`, `screens/detail.rs` or `screens/topics.rs` | Add `bookmarks_by_tag(tag, page)`. |
 
 ## Component mapping
 
-| Prototype component | Dioxus/CSS target | Notes |
+| UI concept | Dioxus/CSS target | Notes |
 | --- | --- | --- |
-| `B_PAPERS`, `bPaper` | CSS custom properties + `PaperTone` enum | `cream`, `offwhite`, `gray` are canonical. |
-| `B_FONT_SERIF`, `B_FONT_MONO` | CSS font stacks | Use Source Serif 4 / JetBrains Mono if available; retain system fallbacks. |
-| `BSmallcaps` | `Smallcaps` component/class | Prefer CSS class reuse over inline style sprawl. |
-| `BMasthead` | `Masthead` component | Supports compact/non-compact and dynamic subline counts. |
-| `BTagRail` | `TagRail` component | Uses real top tags and layout controls. |
-| `BSidebar` | `AppShell`/`Sidebar` | Shows navigation, top tags, database path/status. |
-| `BEntry` | `BookmarkEntry` | Maps model fields: content, author, tags, favorite, tweeted_at/imported_at/media. |
-| `BInlineDetail` | `InlineDetail` | Missing mock fields (`likes`, `saved_at`) must map to real fields or be omitted/deferred. |
+| Paper tones | CSS custom properties + `PaperTone` enum | `cream`, `offwhite`, `gray` are canonical. |
+| Font stacks | CSS font stacks | Use Source Serif 4 / JetBrains Mono if available; retain system fallbacks. |
+| Smallcaps labels | `Smallcaps` component/class | Prefer CSS class reuse over inline style sprawl. |
+| Masthead | `Masthead` component | Supports compact/non-compact and dynamic subline counts. |
+| Tag rail | `TagRail` component | Uses real top tags and layout controls. |
+| Sidebar | `AppShell`/`Sidebar` | Shows navigation, top tags, database path/status. |
+| Bookmark entry | `BookmarkEntry` | Maps model fields: content, author, tags, favorite, tweeted_at/imported_at/media. |
+| Inline detail | `InlineDetail` | Missing mock fields (`likes`, `saved_at`) must map to real fields or be omitted/deferred. |
 | `BLayoutIssue/Front/Long/Spread` | layout-specific components/classes | All data-backed, with shared entry components. |
 | Import stepper | `ImportFlow` state machine | Source → Preview → Importing → Done. |
 | Tweaks panel | Settings screen / local state | Do not ship design-host edit mode. |
@@ -119,7 +122,7 @@ Preferred concepts:
 
 ```text
 .omx/artifacts/visual/eterea-full-app/
-  reference/      # baseline screenshots from design/Eterea - Full App.html
+  reference/      # baseline screenshots from the running Dioxus app
   verdicts/       # visual-ralph / visual-verdict JSON + markdown reports
 ```
 
@@ -143,7 +146,7 @@ Canonical reference IDs:
 - `author-detail`
 - `topic-detail`
 
-Reference screenshot naming convention:
+Reference screenshot naming convention, when captures are regenerated from the app:
 
 ```text
 .omx/artifacts/visual/eterea-full-app/reference/<screen-id>-1440x1000.png
@@ -167,7 +170,7 @@ Verdict statuses:
 
 - `PASS`: close enough to reference and no blocking deviations.
 - `ACCEPTED_DEVIATION`: mismatch documented with rationale.
-- `FIX_REQUIRED`: visual mismatch blocks the milestone.
+- `FIX_REQUIRED`: visual mismatch blocks release.
 
 ## Fixture and performance contract
 
@@ -208,7 +211,7 @@ Budgets copied from the approved test spec:
 - Import 10k entries < 10s on dev machine.
 - First usable shell < 1.5s after process start on dev machine.
 
-Trigger `$performance-goal` if a screen/API milestone misses budget without a narrow local fix.
+Trigger `$performance-goal` if a screen/API path misses budget without a narrow local fix.
 
 ## Accessibility artifact contract
 
@@ -228,15 +231,13 @@ Checklist must cover:
 - Empty/error states are readable and actionable.
 - Main text, muted text, accent buttons, and active navigation receive a contrast spot-check.
 
-## Milestone gate for implementation start
+## Production implementation guardrails
 
-Implementation may begin after M0 when these exist:
+Before large UI refactors, keep or update these production-readiness anchors:
 
-- `docs/design-implementation-map.md`
-- `.omx/artifacts/visual/eterea-full-app/reference/README.md`
-- `.omx/artifacts/visual/eterea-full-app/verdicts/README.md`
-- `.omx/artifacts/perf/eterea-full-app/README.md`
-- `.omx/artifacts/accessibility/eterea-full-app/checklist.md`
-- `fixtures/perf/README.md`
+- `docs/design-system.md` documents the implemented UI system and route mapping.
+- `docs/operations/release-readiness.md` records release checks, waivers, and manual evidence.
+- `fixtures/perf/README.md` explains performance fixture expectations.
+- Automated tests cover service guardrails, performance budgets, route helpers, design-system class contracts, and media-safety policy.
 
-M1 must then lock current behavior with tests/baselines before large UI refactors.
+Lock current behavior with tests or baselines before changing layout, service boundaries, import semantics, or media-loading policy.

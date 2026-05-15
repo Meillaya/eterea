@@ -6,13 +6,15 @@
 //!   --legacy <path>   Import from legacy CSV format
 //!   --new <path>      Import from new CSV format  
 //!   --json <path>     Import from JSON format
-//!   --all             Import all files from src/legacy/
+//!   --all             Import all files from ./imports/
 //!   --dry-run         Parse but don't save to database
 
 use eterea_core::{Database, Ingester};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+const DEFAULT_IMPORT_DIR: &str = "imports";
 
 #[derive(Debug, PartialEq, Eq)]
 enum Command {
@@ -117,7 +119,7 @@ fn print_usage() {
     println!("    migrate [OPTIONS] [FILE]");
     println!();
     println!("OPTIONS:");
-    println!("    --all           Import all files from src/legacy/");
+    println!("    --all           Import all CSV/JSON/JS files from ./imports/");
     println!("    --legacy PATH   Import from legacy CSV format (Dewey)");
     println!("    --new PATH      Import from new CSV format (Twitter/X)");
     println!("    --json PATH     Import from JSON format");
@@ -127,22 +129,23 @@ fn print_usage() {
     println!("EXAMPLES:");
     println!("    migrate --all");
     println!("    migrate --legacy bookmarks.csv");
-    println!("    migrate src/legacy/new_bookmarks.csv");
+    println!("    migrate imports/bookmarks.csv");
     println!("    migrate --dry-run --all");
-    println!("    migrate src/legacy/new_bookmarks.json --dry-run");
+    println!("    migrate imports/bookmarks.json --dry-run");
 }
 
 fn import_all(dry_run: bool) {
-    println!("📂 Importing all bookmark files from src/legacy/");
+    println!("📂 Importing all bookmark files from {DEFAULT_IMPORT_DIR}/");
     println!();
 
-    let legacy_dir = PathBuf::from("src/legacy");
-    if !legacy_dir.exists() {
-        eprintln!("Error: src/legacy directory not found");
+    let import_dir = PathBuf::from(DEFAULT_IMPORT_DIR);
+    if !import_dir.exists() {
+        eprintln!("Error: {DEFAULT_IMPORT_DIR}/ directory not found");
+        eprintln!("Create it locally or pass an explicit export file path.");
         return;
     }
 
-    let files: Vec<PathBuf> = std::fs::read_dir(&legacy_dir)
+    let files: Vec<PathBuf> = std::fs::read_dir(&import_dir)
         .unwrap()
         .filter_map(|e| e.ok())
         .map(|e| e.path())
@@ -153,7 +156,7 @@ fn import_all(dry_run: bool) {
         .collect();
 
     if files.is_empty() {
-        println!("No CSV or JSON files found in src/legacy/");
+        println!("No CSV, JSON, or JS files found in {DEFAULT_IMPORT_DIR}/");
         return;
     }
 

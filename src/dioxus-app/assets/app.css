@@ -370,7 +370,7 @@ button { cursor: pointer; }
   .status-bar { position: static; margin: 0 16px 16px; }
 }
 
-/* Editorial reading layout modes translated from design/b-library.jsx. */
+/* Editorial reading layout modes for the production Dioxus reading room. */
 .feed-issue .bookmark-card:first-child .bookmark-content {
   font-size: clamp(1.25rem, 2.2vw, 1.65rem);
   line-height: 1.45;

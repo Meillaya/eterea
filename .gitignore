@@ -1,6 +1,5 @@
 # Rust
 /target/
-Cargo.lock
 
 # Node
 node_modules/
@@ -38,8 +37,13 @@ src/frontend/.omc/
 .env
 .env.local
 .direnv/
+/imports/
 
 # Nix
 result
 
 src/legacy/
+
+# Generated design/runtime exports
+/*standalone*.html
+/Eterea - *standalone*.html

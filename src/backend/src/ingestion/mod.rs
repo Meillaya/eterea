@@ -8,6 +8,7 @@
 
 mod csv_parser;
 mod json_parser;
+mod media_metadata;
 
 pub use csv_parser::{CsvFormat, LegacyCsvParser, NewCsvParser};
 pub use json_parser::JsonParser;

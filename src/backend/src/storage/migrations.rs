@@ -8,6 +8,17 @@ use tracing::debug;
 
 const CURRENT_SCHEMA_USER_VERSION: i64 = 0;
 
+const MEDIA_METADATA_COLUMNS: &[(&str, &str)] = &[
+    ("alt_text", "TEXT"),
+    ("width", "INTEGER"),
+    ("height", "INTEGER"),
+    ("source_media_key", "TEXT"),
+    ("source_type", "TEXT"),
+    ("preview_url", "TEXT"),
+    ("variant_url", "TEXT"),
+    ("variants_json", "TEXT"),
+];
+
 impl Database {
     pub(crate) fn initialize(&self) -> Result<()> {
         // Set performance pragmas
@@ -21,6 +32,7 @@ impl Database {
         self.conn.execute_batch(SCHEMA)?;
 
         self.ensure_is_favorite_column()?;
+        self.ensure_media_metadata_columns()?;
         self.ensure_has_media_column()?;
         self.ensure_author_stats_snapshot()?;
         self.conn.execute_batch("PRAGMA optimize;")?;
@@ -153,6 +165,21 @@ FROM bookmarks
 GROUP BY author_handle;
 "#,
         )?;
+
+        Ok(())
+    }
+
+    fn ensure_media_metadata_columns(&self) -> Result<()> {
+        if !self.table_exists("media")? {
+            return Ok(());
+        }
+
+        for (column_name, column_type) in MEDIA_METADATA_COLUMNS {
+            if !self.table_column_exists("media", column_name)? {
+                let statement = format!("ALTER TABLE media ADD COLUMN {column_name} {column_type}");
+                self.conn.execute(&statement, [])?;
+            }
+        }
 
         Ok(())
     }

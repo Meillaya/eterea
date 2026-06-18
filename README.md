@@ -24,15 +24,19 @@ Status: [CI](https://github.com/Meillaya/eterea/actions/workflows/ci.yml) · [MI
 - Searches text and filters by author, topic, date, media, and favorites.
 - Offers terminal-style library views: table, tree, dashboard, graph, and calendar.
 - Opens entry detail, author, topic, search, import, and settings routes from the same desktop shell.
-- Keeps remote tweet images hidden by default; loading them is a session-only choice.
+- Keeps remote tweet images hidden by default; load media per tweet or for the current session only.
+- Stores media metadata such as alt text, dimensions, source type, preview URL, and variants when exports include it; it does not cache media bytes.
 
 ## Privacy model
 
 Eterea does not sync with X, phone home, or run a background companion service.
 Imported bookmark data stays on your machine. Text is rendered as text, not raw
 HTML. Stored media URLs are treated cautiously: previews are hidden unless you
-explicitly enable them, and external opening is limited to explicit HTTPS user
-actions.
+explicitly load one tweet or enable all images for the current session, and
+external opening is limited to explicit HTTPS user actions. Eterea stores
+metadata-only media fields from imports (alt text, dimensions, source keys,
+preview URLs, and variants) so the UI can label and reserve layout space, but it
+does not download media in the background or persist media bytes.
 
 ## Quick start
 

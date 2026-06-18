@@ -49,6 +49,14 @@ CREATE TABLE IF NOT EXISTS media (
     bookmark_id TEXT NOT NULL,
     url TEXT NOT NULL,
     media_type TEXT NOT NULL,
+    alt_text TEXT,
+    width INTEGER,
+    height INTEGER,
+    source_media_key TEXT,
+    source_type TEXT,
+    preview_url TEXT,
+    variant_url TEXT,
+    variants_json TEXT,
     FOREIGN KEY (bookmark_id) REFERENCES bookmarks(id) ON DELETE CASCADE
 );
 

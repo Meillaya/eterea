@@ -1,7 +1,7 @@
 //! Bookmark write and mutation persistence.
 
 use super::database::Database;
-use crate::models::{Bookmark, MediaType};
+use crate::models::Bookmark;
 use crate::{Error, Result};
 use rusqlite::{params, CachedStatement, Connection};
 use tracing::debug;
@@ -31,7 +31,10 @@ impl<'conn> BookmarkInsertStatements<'conn> {
                 "INSERT INTO bookmark_tags (bookmark_id, tag_id) VALUES (?1, ?2)",
             )?,
             media: conn.prepare_cached(
-                "INSERT INTO media (bookmark_id, url, media_type) VALUES (?1, ?2, ?3)",
+                r#"INSERT INTO media
+                   (bookmark_id, url, media_type, alt_text, width, height,
+                    source_media_key, source_type, preview_url, variant_url, variants_json)
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"#,
             )?,
             fts_content: conn.prepare_cached(
                 r#"INSERT INTO bookmarks_fts_content
@@ -120,16 +123,19 @@ impl Database {
         }
 
         for media in &bookmark.media {
-            let media_type = match media.media_type {
-                MediaType::Image => "image",
-                MediaType::Video => "video",
-                MediaType::Gif => "gif",
-                MediaType::Unknown => "unknown",
-            };
-
-            statements
-                .media
-                .execute(params![bookmark.id, media.url, media_type])?;
+            statements.media.execute(params![
+                bookmark.id,
+                media.url,
+                media.media_type.as_storage_str(),
+                media.alt_text.as_deref(),
+                media.width,
+                media.height,
+                media.source_media_key.as_deref(),
+                media.source_type.as_deref(),
+                media.preview_url.as_deref(),
+                media.variant_url.as_deref(),
+                media.variants_json.as_deref(),
+            ])?;
         }
 
         let tags_text = bookmark.tags.join(" ");

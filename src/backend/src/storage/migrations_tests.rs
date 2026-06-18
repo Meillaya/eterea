@@ -13,6 +13,7 @@ fn initializes_empty_database_with_current_schema() -> crate::Result<()> {
     assert_table_exists(&db.conn, "media")?;
     assert_column_exists(&db.conn, "is_favorite")?;
     assert_column_exists(&db.conn, "has_media")?;
+    assert_media_metadata_columns_exist(&db.conn)?;
     assert_eq!(
         db.get_metadata(AUTHOR_STATS_METADATA_KEY)?.as_deref(),
         Some("ready")
@@ -42,6 +43,7 @@ fn reopens_existing_current_schema_idempotently() -> crate::Result<()> {
     assert_eq!(row_count, 1);
     assert_column_exists(&reopened.conn, "is_favorite")?;
     assert_column_exists(&reopened.conn, "has_media")?;
+    assert_media_metadata_columns_exist(&reopened.conn)?;
     Ok(())
 }
 
@@ -55,6 +57,7 @@ fn migrates_legacy_bookmarks_shape_idempotently() -> crate::Result<()> {
 
     assert_column_exists(&db.conn, "is_favorite")?;
     assert_column_exists(&db.conn, "has_media")?;
+    assert_media_metadata_columns_exist(&db.conn)?;
     let has_media: i64 = db.conn.query_row(
         "SELECT has_media FROM bookmarks WHERE id = 'legacy-1'",
         [],
@@ -129,6 +132,63 @@ fn repairs_stale_has_media_values_on_retry() -> crate::Result<()> {
         |row| row.get(0),
     )?;
     assert_eq!(has_media, 1);
+    Ok(())
+}
+
+#[test]
+fn preserves_media_metadata_on_insert_and_reopen() -> crate::Result<()> {
+    let temp_dir = TempDir::new()?;
+    let db_path = temp_dir.path().join("media-metadata.db");
+    let db = Database::open(&db_path)?;
+    let bookmark = crate::models::BookmarkBuilder::new()
+        .tweet_url("https://x.com/media/status/1")
+        .content("media row")
+        .tweeted_at(chrono::Utc::now())
+        .author_handle("media")
+        .author_name("Media Author")
+        .add_media_metadata(
+            crate::models::Media::new(
+                "https://pbs.twimg.com/media/full.jpg",
+                crate::models::MediaType::Image,
+            )
+            .with_alt_text(Some("A diagram".to_string()))
+            .with_dimensions(Some(1200), Some(900))
+            .with_source(Some("3_abc".to_string()), Some("photo".to_string()))
+            .with_preview_urls(
+                Some("https://pbs.twimg.com/media/preview.jpg".to_string()),
+                Some("https://video.twimg.com/ext_tw_video/variant.mp4".to_string()),
+            )
+            .with_variants_json(Some(
+                r#"[{"url":"https://video.twimg.com/ext_tw_video/360.mp4","bit_rate":832000},{"url":"https://video.twimg.com/ext_tw_video/720.mp4","bit_rate":2176000}]"#.to_string(),
+            )),
+        )
+        .build()
+        .map_err(|error| crate::Error::Other(error.to_string()))?;
+    let bookmark_id = bookmark.id.clone();
+
+    db.insert_bookmarks(&[bookmark])?;
+    drop(db);
+
+    let reopened = Database::open(&db_path)?;
+    let media = reopened.load_bookmark_media(&bookmark_id)?;
+
+    assert_eq!(media.len(), 1);
+    assert_eq!(media[0].alt_text.as_deref(), Some("A diagram"));
+    assert_eq!(media[0].width, Some(1200));
+    assert_eq!(media[0].height, Some(900));
+    assert_eq!(media[0].source_media_key.as_deref(), Some("3_abc"));
+    assert_eq!(media[0].source_type.as_deref(), Some("photo"));
+    assert_eq!(
+        media[0].preview_url.as_deref(),
+        Some("https://pbs.twimg.com/media/preview.jpg")
+    );
+    assert_eq!(
+        media[0].variant_url.as_deref(),
+        Some("https://video.twimg.com/ext_tw_video/variant.mp4")
+    );
+    let variants_json = media[0].variants_json.as_deref().unwrap_or_default();
+    assert!(variants_json.contains("360.mp4"));
+    assert!(variants_json.contains("720.mp4"));
     Ok(())
 }
 
@@ -216,7 +276,16 @@ fn insert_legacy_bookmark(conn: &Connection) -> crate::Result<()> {
 }
 
 fn assert_column_exists(conn: &Connection, column_name: &str) -> crate::Result<()> {
-    let mut stmt = conn.prepare("PRAGMA table_info(bookmarks)")?;
+    assert_table_column_exists(conn, "bookmarks", column_name)
+}
+
+fn assert_table_column_exists(
+    conn: &Connection,
+    table_name: &str,
+    column_name: &str,
+) -> crate::Result<()> {
+    let pragma = format!("PRAGMA table_info({table_name})");
+    let mut stmt = conn.prepare(&pragma)?;
     let mut rows = stmt.query([])?;
     while let Some(row) = rows.next()? {
         let current_name: String = row.get(1)?;
@@ -225,8 +294,24 @@ fn assert_column_exists(conn: &Connection, column_name: &str) -> crate::Result<(
         }
     }
     Err(crate::Error::Other(format!(
-        "missing migrated column {column_name}"
+        "missing migrated column {table_name}.{column_name}"
     )))
+}
+
+fn assert_media_metadata_columns_exist(conn: &Connection) -> crate::Result<()> {
+    for column_name in [
+        "alt_text",
+        "width",
+        "height",
+        "source_media_key",
+        "source_type",
+        "preview_url",
+        "variant_url",
+        "variants_json",
+    ] {
+        assert_table_column_exists(conn, "media", column_name)?;
+    }
+    Ok(())
 }
 
 fn assert_column_absent(conn: &Connection, column_name: &str) -> crate::Result<()> {

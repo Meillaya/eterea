@@ -1,9 +1,10 @@
 //! JSON parsing for Twitter bookmark exports
 
-use crate::models::{Bookmark, BookmarkBuilder};
+use super::media_metadata::{extract_media, media_from_value};
+use crate::models::{Bookmark, BookmarkBuilder, Media};
 use crate::{Error, Result};
 use chrono::{DateTime, Utc};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs::File;
 use std::io::BufReader;
@@ -95,8 +96,8 @@ impl JsonParser {
 
         if let Some(media) = raw.extended_media.or(raw.media) {
             for item in media {
-                if let Some(url) = item.media_url_https.or(item.url) {
-                    builder = builder.add_media(url);
+                if let Some(media) = item.into_media() {
+                    builder = builder.add_media_metadata(media);
                 }
             }
         }
@@ -277,8 +278,8 @@ impl JsonParser {
             }
         }
 
-        for url in self.extract_media_urls(raw) {
-            builder = builder.add_media(url);
+        for media in extract_media(raw) {
+            builder = builder.add_media_metadata(media);
         }
 
         let mut bookmark = builder.build().map_err(|e| Error::Other(e.to_string()))?;
@@ -349,36 +350,6 @@ impl JsonParser {
         }
 
         Some(result)
-    }
-
-    fn extract_media_urls(&self, raw: &Value) -> Vec<String> {
-        let mut urls = Vec::new();
-
-        for path in [
-            &["media"][..],
-            &["extended_media"][..],
-            &["entities", "media"][..],
-            &["legacy", "entities", "media"][..],
-        ] {
-            let Some(Value::Array(items)) = Self::value_at_path(raw, path) else {
-                continue;
-            };
-
-            for item in items {
-                let url = Self::value_at_path(item, &["url"])
-                    .or_else(|| Self::value_at_path(item, &["media_url"]))
-                    .or_else(|| Self::value_at_path(item, &["media_url_https"]))
-                    .and_then(Self::value_to_string);
-
-                if let Some(url) = url {
-                    if !urls.contains(&url) {
-                        urls.push(url);
-                    }
-                }
-            }
-        }
-
-        urls
     }
 
     fn extract_handle_from_url(&self, url: &str) -> Option<String> {
@@ -476,12 +447,40 @@ struct FlatJsonBookmark {
     media: Option<Vec<FlatMedia>>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct FlatMedia {
     #[serde(default)]
     media_url_https: Option<String>,
     #[serde(default)]
+    media_url: Option<String>,
+    #[serde(default)]
     url: Option<String>,
+    #[serde(default, alias = "type")]
+    source_type: Option<String>,
+    #[serde(default)]
+    media_key: Option<String>,
+    #[serde(default)]
+    alt_text: Option<String>,
+    #[serde(default)]
+    ext_alt_text: Option<String>,
+    #[serde(default)]
+    width: Option<i64>,
+    #[serde(default)]
+    height: Option<i64>,
+    #[serde(default)]
+    preview_image_url: Option<String>,
+    #[serde(default)]
+    variants: Option<Vec<Value>>,
+    #[serde(default)]
+    video_info: Option<Value>,
+}
+
+impl FlatMedia {
+    fn into_media(self) -> Option<Media> {
+        serde_json::to_value(self)
+            .ok()
+            .and_then(|value| media_from_value(&value))
+    }
 }
 
 impl Default for JsonParser {
@@ -493,6 +492,7 @@ impl Default for JsonParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::MediaType;
     use std::fs;
     use tempfile::tempdir;
 
@@ -507,6 +507,60 @@ mod tests {
         assert_eq!(bookmarks[0].author_handle, "cinesansar");
         assert_eq!(bookmarks[0].tags, vec!["rust"]);
         assert_eq!(bookmarks[0].media.len(), 1);
+    }
+
+    #[test]
+    fn parses_flat_media_metadata_fast_path() {
+        let bookmarks = JsonParser::new()
+            .parse_str(
+                r#"[{"bookmark_date":"2025-08-25T17:25:01.047Z","screen_name":"media","name":"Media","full_text":"hello","tweeted_at":"2025-08-25T10:52:35.000Z","extended_media":[{"media_key":"7_fast","type":"video","preview_image_url":"https://pbs.twimg.com/media/preview.jpg","alt_text":"Alt from export","width":640,"height":480,"video_info":{"variants":[{"url":"https://video.twimg.com/fast/360.mp4","bit_rate":832000,"content_type":"video/mp4"},{"url":"https://video.twimg.com/fast/hls.m3u8","content_type":"application/x-mpegURL"}]} }],"tweet_url":"https://x.com/media/status/123"}]"#,
+            )
+            .unwrap();
+
+        let media = &bookmarks[0].media[0];
+        assert_eq!(media.source_media_key.as_deref(), Some("7_fast"));
+        assert_eq!(media.source_type.as_deref(), Some("video"));
+        assert_eq!(media.media_type, MediaType::Video);
+        assert_eq!(
+            media.variant_url.as_deref(),
+            Some("https://video.twimg.com/fast/360.mp4")
+        );
+        let variants_json = media.variants_json.as_deref().unwrap_or_default();
+        assert!(variants_json.contains("bit_rate"));
+        assert!(variants_json.contains("content_type"));
+        assert_eq!(media.alt_text.as_deref(), Some("Alt from export"));
+        assert_eq!(media.width, Some(640));
+        assert_eq!(media.height, Some(480));
+        assert_eq!(
+            media.preview_url.as_deref(),
+            Some("https://pbs.twimg.com/media/preview.jpg")
+        );
+    }
+
+    #[test]
+    fn parses_included_x_media_metadata_fallback_path() {
+        let bookmarks = JsonParser::new()
+            .parse_str(
+                r#"{"bookmarks":[{"tweet_id":"123","created_at":"2025-08-25T10:52:35.000Z","username":"media","full_text":"video bookmark","attachments":{"media_keys":["7_video"]},"includes":{"media":[{"media_key":"7_video","type":"video","preview_image_url":"https://pbs.twimg.com/ext_tw_video/thumb.jpg","variants":[{"url":"https://video.twimg.com/ext_tw_video/360.mp4","bit_rate":832000},{"url":"https://video.twimg.com/ext_tw_video/720.mp4","bit_rate":2176000}],"width":1280,"height":720}]}}]}"#,
+            )
+            .unwrap();
+
+        let media = &bookmarks[0].media[0];
+        assert_eq!(media.media_type, MediaType::Video);
+        assert_eq!(media.source_media_key.as_deref(), Some("7_video"));
+        assert_eq!(
+            media.preview_url.as_deref(),
+            Some("https://pbs.twimg.com/ext_tw_video/thumb.jpg")
+        );
+        assert_eq!(
+            media.variant_url.as_deref(),
+            Some("https://video.twimg.com/ext_tw_video/360.mp4")
+        );
+        let variants_json = media.variants_json.as_deref().unwrap_or_default();
+        assert!(variants_json.contains("360.mp4"));
+        assert!(variants_json.contains("720.mp4"));
+        assert_eq!(media.width, Some(1280));
+        assert_eq!(media.height, Some(720));
     }
 
     #[test]

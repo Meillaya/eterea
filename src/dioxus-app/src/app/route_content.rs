@@ -1,4 +1,4 @@
-use super::actions::{reload_library, set_remote_images_enabled};
+use super::actions::{load_bookmark_remote_images, reload_library, set_remote_images_enabled};
 use super::author_directory::{author_directory_status, visible_author_directory};
 use super::components::{MediaGallery, MediaGalleryMode};
 use super::onboarding::onboarding_screen;
@@ -128,6 +128,7 @@ fn detail_or_feed(mut state: Signal<LibraryState>, services: Services, id: &str)
         .find(|bookmark| bookmark.id == id)
         .cloned();
     let remote_images_enabled = snapshot.remote_images_enabled;
+    let bookmark_images_enabled = snapshot.loaded_media_bookmark_ids.contains(id);
     drop(snapshot);
 
     if bookmark.is_none() {
@@ -146,6 +147,7 @@ fn detail_or_feed(mut state: Signal<LibraryState>, services: Services, id: &str)
             author_handle,
             tags,
             media,
+            id,
             ..
         } = bookmark;
         let context_label = format!("@{author_handle} tweet");
@@ -165,7 +167,9 @@ fn detail_or_feed(mut state: Signal<LibraryState>, services: Services, id: &str)
                     MediaGallery {
                         media,
                         remote_images_enabled,
+                        bookmark_images_enabled,
                         on_enable_remote_images: move |_| set_remote_images_enabled(&mut state, true),
+                        on_enable_bookmark_images: move |_| load_bookmark_remote_images(&mut state, &id),
                         context_label,
                         mode: MediaGalleryMode::Detail,
                     }

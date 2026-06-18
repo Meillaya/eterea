@@ -7,6 +7,8 @@ pub(crate) struct MediaPreview {
     pub(crate) url: String,
     pub(crate) alt_text: String,
     pub(crate) media_type: MediaType,
+    pub(crate) width: Option<i64>,
+    pub(crate) height: Option<i64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -35,36 +37,47 @@ pub(crate) fn media_presentation(
     remote_images_enabled: bool,
     context_label: &str,
 ) -> MediaPresentation {
+    media_presentation_with_limit(media, remote_images_enabled, context_label, PREVIEW_LIMIT)
+}
+
+pub(crate) fn media_presentation_with_limit(
+    media: &[Media],
+    remote_images_enabled: bool,
+    context_label: &str,
+    preview_limit: usize,
+) -> MediaPresentation {
     let mut image_previews = Vec::new();
     let mut external_links = Vec::new();
     let mut safe_image_count = 0usize;
     let mut blocked_count = 0usize;
 
     for item in media {
-        let url = item.url.trim();
-        if !is_safe_https_url(url) {
-            blocked_count += 1;
-            continue;
-        }
+        let primary_url = item.url.trim();
+        let safe_primary = is_safe_https_url(primary_url);
 
         match item.media_type {
             MediaType::Image => {
+                if !safe_primary {
+                    blocked_count += 1;
+                    continue;
+                }
                 safe_image_count += 1;
-                if remote_images_enabled && image_previews.len() < PREVIEW_LIMIT {
-                    image_previews.push(MediaPreview {
-                        url: url.to_string(),
-                        alt_text: media_alt_text(context_label, &MediaType::Image),
-                        media_type: MediaType::Image,
-                    });
+                if remote_images_enabled && image_previews.len() < preview_limit {
+                    image_previews.push(media_preview(
+                        primary_url,
+                        item,
+                        context_label,
+                        MediaType::Image,
+                    ));
                 }
             }
             MediaType::Video | MediaType::Gif | MediaType::Unknown => {
+                let Some(url) = safe_external_url(item, primary_url) else {
+                    blocked_count += 1;
+                    continue;
+                };
                 let media_type = item.media_type.clone();
-                external_links.push(MediaPreview {
-                    url: url.to_string(),
-                    alt_text: media_alt_text(context_label, &media_type),
-                    media_type,
-                });
+                external_links.push(media_preview(&url, item, context_label, media_type));
             }
         }
     }
@@ -74,7 +87,7 @@ pub(crate) fn media_presentation(
     } else {
         safe_image_count
     };
-    let overflow_count = safe_image_count.saturating_sub(PREVIEW_LIMIT);
+    let overflow_count = safe_image_count.saturating_sub(preview_limit);
 
     MediaPresentation {
         image_previews,
@@ -95,7 +108,39 @@ pub(crate) fn is_safe_https_url(url: &str) -> bool {
             .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"))
 }
 
-fn media_alt_text(context_label: &str, media_type: &MediaType) -> String {
+fn media_preview(
+    url: &str,
+    item: &Media,
+    context_label: &str,
+    media_type: MediaType,
+) -> MediaPreview {
+    MediaPreview {
+        url: url.to_string(),
+        alt_text: media_alt_text(context_label, &media_type, item.alt_text.as_deref()),
+        media_type,
+        width: item.width.filter(|width| *width > 0),
+        height: item.height.filter(|height| *height > 0),
+    }
+}
+
+fn safe_external_url(item: &Media, primary_url: &str) -> Option<String> {
+    item.variant_url
+        .as_deref()
+        .filter(|url| is_safe_https_url(url))
+        .or_else(|| {
+            item.preview_url
+                .as_deref()
+                .filter(|url| is_safe_https_url(url))
+        })
+        .or_else(|| is_safe_https_url(primary_url).then_some(primary_url))
+        .map(|url| url.trim().to_string())
+}
+
+fn media_alt_text(context_label: &str, media_type: &MediaType, alt_text: Option<&str>) -> String {
+    if let Some(alt_text) = alt_text.map(str::trim).filter(|text| !text.is_empty()) {
+        return alt_text.to_string();
+    }
+
     match media_type {
         MediaType::Image => format!("Image from {context_label}"),
         MediaType::Video => format!("Video media from {context_label}"),
@@ -109,10 +154,7 @@ mod tests {
     use super::*;
 
     fn media(url: &str, media_type: MediaType) -> Media {
-        Media {
-            url: url.to_string(),
-            media_type,
-        }
+        Media::new(url, media_type)
     }
 
     #[test]
@@ -202,6 +244,81 @@ mod tests {
         assert!(state.image_previews.is_empty());
         assert_eq!(state.hidden_image_count, 6);
         assert_eq!(state.overflow_count, 2);
+    }
+
+    #[test]
+    fn custom_preview_limit_allows_detail_gallery_to_show_more_images() {
+        let media = (0..6)
+            .map(|index| {
+                media(
+                    &format!("https://pbs.twimg.com/media/detail-{index}.jpg"),
+                    MediaType::Image,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let state = media_presentation_with_limit(&media, true, "@alice tweet", usize::MAX);
+
+        assert_eq!(state.image_previews.len(), 6);
+        assert_eq!(state.overflow_count, 0);
+    }
+
+    #[test]
+    fn image_preview_uses_alt_text_and_dimensions_from_metadata() {
+        let state = media_presentation(
+            &[
+                Media::new("https://pbs.twimg.com/media/a.jpg", MediaType::Image)
+                    .with_alt_text(Some("Architecture diagram".to_string()))
+                    .with_dimensions(Some(1600), Some(900)),
+            ],
+            true,
+            "@alice tweet",
+        );
+
+        assert_eq!(state.image_previews[0].alt_text, "Architecture diagram");
+        assert_eq!(state.image_previews[0].width, Some(1600));
+        assert_eq!(state.image_previews[0].height, Some(900));
+    }
+
+    #[test]
+    fn external_media_prefers_safe_variant_url_without_inline_previewing_video() {
+        let state = media_presentation(
+            &[Media::new(
+                "https://pbs.twimg.com/ext_tw_video/thumb.jpg",
+                MediaType::Video,
+            )
+            .with_preview_urls(
+                Some("https://pbs.twimg.com/ext_tw_video/thumb.jpg".to_string()),
+                Some("https://video.twimg.com/ext_tw_video/720.mp4".to_string()),
+            )],
+            true,
+            "@alice tweet",
+        );
+
+        assert!(state.image_previews.is_empty());
+        assert_eq!(state.external_links.len(), 1);
+        assert_eq!(
+            state.external_links[0].url,
+            "https://video.twimg.com/ext_tw_video/720.mp4"
+        );
+    }
+
+    #[test]
+    fn hidden_mode_does_not_render_metadata_preview_urls() {
+        let state = media_presentation(
+            &[
+                Media::new("https://pbs.twimg.com/media/a.jpg", MediaType::Image)
+                    .with_preview_urls(
+                        Some("https://pbs.twimg.com/media/preview.jpg".to_string()),
+                        None,
+                    ),
+            ],
+            false,
+            "@alice tweet",
+        );
+
+        assert!(state.image_previews.is_empty());
+        assert_eq!(state.hidden_image_count, 1);
     }
 
     #[test]

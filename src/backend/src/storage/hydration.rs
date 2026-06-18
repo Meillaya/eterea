@@ -93,7 +93,8 @@ impl Database {
 
         let placeholders = vec!["?"; bookmark_ids.len()].join(", ");
         let sql = format!(
-            r#"SELECT bookmark_id, url, media_type
+            r#"SELECT bookmark_id, url, media_type, alt_text, width, height,
+                      source_media_key, source_type, preview_url, variant_url, variants_json
                FROM media
                WHERE bookmark_id IN ({placeholders})
                ORDER BY bookmark_id, id"#
@@ -109,18 +110,12 @@ impl Database {
 
         while let Some(row) = rows.next()? {
             let bookmark_id: String = row.get(0)?;
-            let url: String = row.get(1)?;
-            let media_type = match row.get::<_, String>(2)?.as_str() {
-                "image" => MediaType::Image,
-                "video" => MediaType::Video,
-                "gif" => MediaType::Gif,
-                _ => MediaType::Unknown,
-            };
+            let media = media_from_row(row, 1)?;
 
             media_by_bookmark
                 .entry(bookmark_id)
                 .or_default()
-                .push(Media { url, media_type });
+                .push(media);
         }
 
         Ok(media_by_bookmark)
@@ -173,26 +168,36 @@ impl Database {
 
     /// Load media for a bookmark
     pub fn load_bookmark_media(&self, bookmark_id: &str) -> Result<Vec<Media>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT url, media_type FROM media WHERE bookmark_id = ?1")?;
+        let mut stmt = self.conn.prepare(
+            r#"SELECT url, media_type, alt_text, width, height,
+                          source_media_key, source_type, preview_url, variant_url, variants_json
+                   FROM media
+                   WHERE bookmark_id = ?1
+                   ORDER BY id"#,
+        )?;
 
         let media = stmt
-            .query_map(params![bookmark_id], |row| {
-                let url: String = row.get(0)?;
-                let media_type_str: String = row.get(1)?;
-                let media_type = match media_type_str.as_str() {
-                    "image" => MediaType::Image,
-                    "video" => MediaType::Video,
-                    "gif" => MediaType::Gif,
-                    _ => MediaType::Unknown,
-                };
-                Ok(Media { url, media_type })
-            })?
+            .query_map(params![bookmark_id], |row| media_from_row(row, 0))?
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(media)
     }
+}
+
+fn media_from_row(row: &rusqlite::Row<'_>, start: usize) -> rusqlite::Result<Media> {
+    let media_type: String = row.get(start + 1)?;
+    Ok(Media {
+        url: row.get(start)?,
+        media_type: MediaType::from_storage_str(&media_type),
+        alt_text: row.get(start + 2)?,
+        width: row.get(start + 3)?,
+        height: row.get(start + 4)?,
+        source_media_key: row.get(start + 5)?,
+        source_type: row.get(start + 6)?,
+        preview_url: row.get(start + 7)?,
+        variant_url: row.get(start + 8)?,
+        variants_json: row.get(start + 9)?,
+    })
 }
 
 fn utc_timestamp_from_row(timestamp: i64, column: usize) -> rusqlite::Result<DateTime<Utc>> {

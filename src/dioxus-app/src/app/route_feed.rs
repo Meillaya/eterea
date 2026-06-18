@@ -1,10 +1,14 @@
-use super::actions::{format_timestamp, load_more, reload_library, toggle_expanded_bookmark};
+use super::actions::{
+    format_timestamp, load_bookmark_remote_images, load_more, reload_library,
+    set_remote_images_enabled, toggle_expanded_bookmark,
+};
+use super::components::{MediaGallery, MediaGalleryMode};
 use super::route::ScreenRoute;
 use super::state::{LayoutMode, LibraryState, Services};
 use chrono::{Timelike, Utc};
 use dioxus::prelude::*;
 use eterea_core::Bookmark;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) fn archive_feed_or_empty(
     mut state: Signal<LibraryState>,
@@ -62,11 +66,32 @@ struct FeedPayload {
     has_more: bool,
     error_message: Option<String>,
     expanded_bookmark_id: Option<String>,
-    selected_ids: std::collections::BTreeSet<String>,
+    selected_ids: BTreeSet<String>,
     total: i64,
     top_tags: Vec<(String, i64)>,
     unique_authors: i64,
     favorite_bookmarks: i64,
+    remote_images_enabled: bool,
+    loaded_media_bookmark_ids: BTreeSet<String>,
+}
+
+#[derive(Clone)]
+struct FeedRowContext {
+    expanded_bookmark_id: Option<String>,
+    selected_ids: BTreeSet<String>,
+    remote_images_enabled: bool,
+    loaded_media_bookmark_ids: BTreeSet<String>,
+}
+
+impl From<&FeedPayload> for FeedRowContext {
+    fn from(payload: &FeedPayload) -> Self {
+        Self {
+            expanded_bookmark_id: payload.expanded_bookmark_id.clone(),
+            selected_ids: payload.selected_ids.clone(),
+            remote_images_enabled: payload.remote_images_enabled,
+            loaded_media_bookmark_ids: payload.loaded_media_bookmark_ids.clone(),
+        }
+    }
 }
 
 fn feed_payload(state: &Signal<LibraryState>) -> FeedPayload {
@@ -83,6 +108,8 @@ fn feed_payload(state: &Signal<LibraryState>) -> FeedPayload {
         top_tags: snapshot.top_tags.clone(),
         unique_authors: stats.as_ref().map_or(0, |stats| stats.unique_authors),
         favorite_bookmarks: stats.as_ref().map_or(0, |stats| stats.favorite_bookmarks),
+        remote_images_enabled: snapshot.remote_images_enabled,
+        loaded_media_bookmark_ids: snapshot.loaded_media_bookmark_ids.clone(),
     }
 }
 
@@ -103,6 +130,8 @@ fn view_switcher(mut state: Signal<LibraryState>) -> Element {
 }
 
 fn table_view(state: Signal<LibraryState>, services: Services, payload: FeedPayload) -> Element {
+    let row_context = FeedRowContext::from(&payload);
+    let bookmarks = payload.bookmarks;
     rsx! {
         div { class: "terminal-table",
             div { class: "table-head",
@@ -115,15 +144,8 @@ fn table_view(state: Signal<LibraryState>, services: Services, payload: FeedPayl
                 span { "★" }
             }
             div { class: "table-body",
-                for (index, bookmark) in payload.bookmarks.into_iter().enumerate() {
-                    {table_row(
-                        state,
-                        services.clone(),
-                        index,
-                        bookmark,
-                        payload.expanded_bookmark_id.as_deref(),
-                        &payload.selected_ids,
-                    )}
+                for (index, bookmark) in bookmarks.into_iter().enumerate() {
+                    {table_row(state, services.clone(), index, bookmark, &row_context)}
                 }
             }
         }
@@ -135,16 +157,18 @@ fn table_row(
     services: Services,
     index: usize,
     bookmark: Bookmark,
-    expanded_id: Option<&str>,
-    selected_ids: &std::collections::BTreeSet<String>,
+    context: &FeedRowContext,
 ) -> Element {
     let id = bookmark.id.clone();
     let detail_id = bookmark.id.clone();
     let favorite_id = bookmark.id.clone();
+    let media_id = bookmark.id.clone();
     let author_services = services.clone();
     let favorite_services = services.clone();
-    let is_active = expanded_id == Some(bookmark.id.as_str());
-    let is_selected = selected_ids.contains(&bookmark.id);
+    let is_active = context.expanded_bookmark_id.as_deref() == Some(bookmark.id.as_str());
+    let is_selected = context.selected_ids.contains(&bookmark.id);
+    let bookmark_images_enabled = context.loaded_media_bookmark_ids.contains(&bookmark.id);
+    let remote_images_enabled = context.remote_images_enabled;
     let fav = bookmark.is_favorite;
     let tags = bookmark
         .tags
@@ -153,8 +177,12 @@ fn table_row(
         .collect::<Vec<_>>()
         .join(" ");
     let when = format_timestamp(&bookmark.tweeted_at);
+    let imported = format_timestamp(&bookmark.imported_at);
     let author = bookmark.author_handle.clone();
     let content = bookmark.content.clone();
+    let media_count = bookmark.media.len();
+    let media = bookmark.media.clone();
+    let context_label = format!("@{author} tweet");
 
     rsx! {
         div {
@@ -195,15 +223,26 @@ fn table_row(
             }
             if is_active {
                 div { class: "row-detail",
-                    button {
-                        class: "ghost-button small",
-                        onclick: move |event| {
-                            event.stop_propagation();
-                            state.write().route = ScreenRoute::Entry(detail_id.clone());
+                    div { class: "row-detail-actions",
+                        button {
+                            class: "ghost-button small",
+                            onclick: move |event| {
+                                event.stop_propagation();
+                                state.write().route = ScreenRoute::Entry(detail_id.clone());
                         },
                         "open detail"
                     }
-                    span { "media {bookmark.media.len()} · imported {format_timestamp(&bookmark.imported_at)}" }
+                        span { "media {media_count} · imported {imported}" }
+                    }
+                    MediaGallery {
+                        media,
+                        remote_images_enabled,
+                        bookmark_images_enabled,
+                        on_enable_remote_images: move |_| set_remote_images_enabled(&mut state, true),
+                        on_enable_bookmark_images: move |_| load_bookmark_remote_images(&mut state, &media_id),
+                        context_label,
+                        mode: MediaGalleryMode::Feed,
+                    }
                 }
             }
         }

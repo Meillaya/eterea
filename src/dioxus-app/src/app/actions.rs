@@ -97,13 +97,32 @@ fn refresh_from_services(services: &Services, state: &mut LibraryState, preserve
 
 pub(crate) fn set_remote_images_enabled(state: &mut Signal<LibraryState>, enabled: bool) {
     let mut next = state.write();
-    next.remote_images_enabled = enabled;
-    next.status = if enabled {
+    apply_remote_images_enabled(&mut next, enabled);
+}
+
+pub(crate) fn load_bookmark_remote_images(state: &mut Signal<LibraryState>, bookmark_id: &str) {
+    let mut next = state.write();
+    apply_bookmark_remote_images(&mut next, bookmark_id);
+}
+
+fn apply_remote_images_enabled(state: &mut LibraryState, enabled: bool) {
+    state.remote_images_enabled = enabled;
+    if !enabled {
+        state.loaded_media_bookmark_ids.clear();
+    }
+    state.status = if enabled {
         "Remote tweet images enabled for this session."
     } else {
         "Remote tweet images hidden."
     }
     .to_string();
+}
+
+fn apply_bookmark_remote_images(state: &mut LibraryState, bookmark_id: &str) {
+    state
+        .loaded_media_bookmark_ids
+        .insert(bookmark_id.to_string());
+    state.status = "Remote tweet images enabled for this bookmark.".to_string();
 }
 
 pub(crate) fn format_timestamp(value: &DateTime<Utc>) -> String {
@@ -170,5 +189,16 @@ mod tests {
         assert!(normalize_external_url_for_opening("javascript:alert(1)").is_err());
         assert!(normalize_external_url_for_opening("file:///tmp/bookmarks.html").is_err());
         assert!(normalize_external_url_for_opening("").is_err());
+    }
+
+    #[test]
+    fn hiding_remote_images_clears_bookmark_level_media_loads() {
+        let mut state = LibraryState::default();
+
+        apply_bookmark_remote_images(&mut state, "bookmark-1");
+        apply_remote_images_enabled(&mut state, false);
+
+        assert!(!state.remote_images_enabled);
+        assert!(state.loaded_media_bookmark_ids.is_empty());
     }
 }

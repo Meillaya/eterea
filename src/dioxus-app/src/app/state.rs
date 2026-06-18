@@ -228,6 +228,7 @@ pub(crate) struct LibraryState {
     pub(crate) appearance: AppearanceState,
     pub(crate) shell: ShellState,
     pub(crate) remote_images_enabled: bool,
+    pub(crate) loaded_media_bookmark_ids: BTreeSet<String>,
     pub(crate) expanded_bookmark_id: Option<String>,
 }
 
@@ -251,6 +252,7 @@ impl Default for LibraryState {
             appearance: AppearanceState::default(),
             shell: ShellState::default(),
             remote_images_enabled: false,
+            loaded_media_bookmark_ids: BTreeSet::new(),
             expanded_bookmark_id: None,
         }
     }
@@ -265,6 +267,7 @@ mod tests {
         let state = LibraryState::default();
 
         assert!(!state.remote_images_enabled);
+        assert!(state.loaded_media_bookmark_ids.is_empty());
     }
 
     #[test]

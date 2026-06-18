@@ -5,6 +5,8 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
+
+use super::{Media, MediaType};
 use uuid::Uuid;
 
 /// Represents a single Twitter/X bookmark with all associated metadata.
@@ -49,21 +51,6 @@ pub struct Bookmark {
     /// Full-text search content (precomputed for FTS5)
     #[serde(skip)]
     pub search_text: String,
-}
-
-/// Media attachment (image or video)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Media {
-    pub url: String,
-    pub media_type: MediaType,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum MediaType {
-    Image,
-    Video,
-    Gif,
-    Unknown,
 }
 
 /// Author information (denormalized for speed)
@@ -246,28 +233,17 @@ impl BookmarkBuilder {
     pub fn add_media(mut self, url: impl Into<String>) -> Self {
         let url = url.into();
         if !url.is_empty() {
-            let media_type = Self::detect_media_type(&url);
-            self.media.push(Media { url, media_type });
+            let media_type = MediaType::from_url(&url);
+            self.media.push(Media::new(url, media_type));
         }
         self
     }
 
-    fn detect_media_type(url: &str) -> MediaType {
-        let lower = url.to_lowercase();
-        if lower.contains(".gif") || lower.contains("gif") {
-            MediaType::Gif
-        } else if lower.contains(".mp4") || lower.contains("video") {
-            MediaType::Video
-        } else if lower.contains(".jpg")
-            || lower.contains(".jpeg")
-            || lower.contains(".png")
-            || lower.contains(".webp")
-            || lower.contains("pbs.twimg.com")
-        {
-            MediaType::Image
-        } else {
-            MediaType::Unknown
+    pub fn add_media_metadata(mut self, media: Media) -> Self {
+        if !media.url.is_empty() {
+            self.media.push(media);
         }
+        self
     }
 
     pub fn build(self) -> Result<Bookmark, &'static str> {

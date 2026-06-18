@@ -1,1052 +1,21 @@
-//! SQLite database implementation
+//! SQLite database handle and storage module tests.
 
-use super::queries::{AuthorStats, BookmarkStats};
-use super::schema::{PRAGMAS, SCHEMA};
-use crate::models::{Bookmark, Media, MediaType};
-use crate::{Error, Result};
-use rusqlite::types::Value;
-use rusqlite::{params, params_from_iter, Connection};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use tracing::{debug, info};
+use rusqlite::Connection;
+use std::time::Duration;
 
-const STATS_SNAPSHOT_METADATA_KEY: &str = "stats_snapshot_v1";
+pub(super) const STATS_SNAPSHOT_METADATA_KEY: &str = "stats_snapshot_v1";
+pub(super) const AUTHOR_STATS_METADATA_KEY: &str = "author_stats_v1";
+pub(super) const SQLITE_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Main database handle
+/// Main database handle.
 pub struct Database {
-    conn: Connection,
-}
-
-impl Database {
-    /// Open database at the default location
-    pub fn open_default() -> Result<Self> {
-        let path = Self::default_path();
-        Self::open(&path)
-    }
-
-    /// Get the default database path
-    pub fn default_path() -> PathBuf {
-        dirs::data_local_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("eterea")
-            .join("bookmarks.db")
-    }
-
-    /// Open or create database at the specified path
-    pub fn open(path: &Path) -> Result<Self> {
-        // Ensure parent directory exists
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        info!("Opening database at: {}", path.display());
-        let conn = Connection::open(path)?;
-
-        let db = Self { conn };
-        db.initialize()?;
-
-        Ok(db)
-    }
-
-    /// Open an in-memory database (for testing)
-    pub fn open_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory()?;
-        let db = Self { conn };
-        db.initialize()?;
-        Ok(db)
-    }
-
-    /// Initialize database schema
-    fn initialize(&self) -> Result<()> {
-        // Set performance pragmas
-        self.conn.execute_batch(PRAGMAS)?;
-
-        // Create schema
-        self.conn.execute_batch(SCHEMA)?;
-
-        self.ensure_is_favorite_column()?;
-        self.ensure_has_media_column()?;
-
-        debug!("Database initialized");
-        Ok(())
-    }
-
-    fn ensure_has_media_column(&self) -> Result<()> {
-        let mut stmt = self.conn.prepare("PRAGMA table_info(bookmarks)")?;
-        let mut rows = stmt.query([])?;
-        let mut has_column = false;
-        while let Some(row) = rows.next()? {
-            let name: String = row.get(1)?;
-            if name.eq_ignore_ascii_case("has_media") {
-                has_column = true;
-                break;
-            }
-        }
-
-        if !has_column {
-            // Wrap ALTER + backfill in a transaction so a crash between the two
-            // doesn't leave every bookmark with has_media=0 permanently.
-            self.conn.execute("BEGIN IMMEDIATE", [])?;
-            let result = (|| -> Result<()> {
-                self.conn.execute(
-                    "ALTER TABLE bookmarks ADD COLUMN has_media INTEGER DEFAULT 0",
-                    [],
-                )?;
-                self.conn.execute(
-                    "UPDATE bookmarks SET has_media = (SELECT CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END FROM media WHERE bookmark_id = bookmarks.id)",
-                    [],
-                )?;
-                Ok(())
-            })();
-            match result {
-                Ok(()) => {
-                    self.conn.execute("COMMIT", [])?;
-                }
-                Err(e) => {
-                    let _ = self.conn.execute("ROLLBACK", []);
-                    return Err(e);
-                }
-            }
-        }
-
-        // These DDL statements depend on has_media existing — run after the migration above.
-        self.conn.execute_batch(
-            r#"
-CREATE INDEX IF NOT EXISTS idx_bookmarks_has_media ON bookmarks(has_media) WHERE has_media = 1;
-
-CREATE TRIGGER IF NOT EXISTS media_insert_set_has_media AFTER INSERT ON media BEGIN
-    UPDATE bookmarks SET has_media = 1 WHERE id = NEW.bookmark_id;
-END;
-
-CREATE TRIGGER IF NOT EXISTS media_delete_update_has_media AFTER DELETE ON media BEGIN
-    UPDATE bookmarks SET has_media = (
-        SELECT CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END FROM media WHERE bookmark_id = OLD.bookmark_id
-    ) WHERE id = OLD.bookmark_id;
-END;
-"#,
-        )?;
-
-        Ok(())
-    }
-
-    fn ensure_is_favorite_column(&self) -> Result<()> {
-        let mut stmt = self.conn.prepare("PRAGMA table_info(bookmarks)")?;
-        let mut rows = stmt.query([])?;
-        let mut has_column = false;
-        while let Some(row) = rows.next()? {
-            let name: String = row.get(1)?;
-            if name.eq_ignore_ascii_case("is_favorite") {
-                has_column = true;
-                break;
-            }
-        }
-
-        if !has_column {
-            self.conn.execute(
-                "ALTER TABLE bookmarks ADD COLUMN is_favorite INTEGER DEFAULT 0",
-                [],
-            )?;
-        }
-
-        Ok(())
-    }
-
-    /// Insert multiple bookmarks in a transaction
-    pub fn insert_bookmarks(&self, bookmarks: &[Bookmark]) -> Result<usize> {
-        let mut count = 0;
-
-        // Use a transaction for batch insert
-        let conn = &self.conn;
-        conn.execute("BEGIN IMMEDIATE", [])?;
-
-        for bookmark in bookmarks {
-            match self.insert_bookmark_internal(bookmark) {
-                Ok(_) => count += 1,
-                Err(Error::Database(rusqlite::Error::SqliteFailure(err, _)))
-                    if err.code == rusqlite::ErrorCode::ConstraintViolation =>
-                {
-                    // Skip duplicates (same tweet_url)
-                    debug!("Skipping duplicate bookmark: {}", bookmark.tweet_url);
-                }
-                Err(e) => {
-                    conn.execute("ROLLBACK", [])?;
-                    return Err(e);
-                }
-            }
-        }
-
-        if let Err(error) = self.refresh_stats_snapshot() {
-            let _ = conn.execute("ROLLBACK", []);
-            return Err(error);
-        }
-        conn.execute("COMMIT", [])?;
-        Ok(count)
-    }
-
-    fn insert_bookmark_internal(&self, bookmark: &Bookmark) -> Result<()> {
-        // Insert main bookmark
-        let has_media_flag = if bookmark.media.is_empty() {
-            0i32
-        } else {
-            1i32
-        };
-        self.conn.execute(
-            r#"INSERT INTO bookmarks
-               (id, tweet_url, content, note_text, tweeted_at, imported_at,
-                author_handle, author_name, author_profile_url, author_profile_image, comments, is_favorite, has_media)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)"#,
-            params![
-                bookmark.id,
-                bookmark.tweet_url,
-                bookmark.content,
-                bookmark.note_text,
-                bookmark.tweeted_at.timestamp(),
-                bookmark.imported_at.timestamp(),
-                bookmark.author_handle,
-                bookmark.author_name,
-                bookmark.author_profile_url,
-                bookmark.author_profile_image,
-                bookmark.comments,
-                bookmark.is_favorite as i32,
-                has_media_flag,
-            ],
-        )?;
-
-        // Insert tags
-        for tag in &bookmark.tags {
-            // Insert tag if not exists
-            self.conn.execute(
-                "INSERT OR IGNORE INTO tags (name) VALUES (?1)",
-                params![tag],
-            )?;
-
-            // Get tag ID
-            let tag_id: i64 = self.conn.query_row(
-                "SELECT id FROM tags WHERE name = ?1",
-                params![tag],
-                |row| row.get(0),
-            )?;
-
-            // Link bookmark to tag
-            self.conn.execute(
-                "INSERT INTO bookmark_tags (bookmark_id, tag_id) VALUES (?1, ?2)",
-                params![bookmark.id, tag_id],
-            )?;
-        }
-
-        // Insert media
-        for media in &bookmark.media {
-            let media_type = match media.media_type {
-                MediaType::Image => "image",
-                MediaType::Video => "video",
-                MediaType::Gif => "gif",
-                MediaType::Unknown => "unknown",
-            };
-
-            self.conn.execute(
-                "INSERT INTO media (bookmark_id, url, media_type) VALUES (?1, ?2, ?3)",
-                params![bookmark.id, media.url, media_type],
-            )?;
-        }
-
-        // Insert FTS content
-        let tags_text = bookmark.tags.join(" ");
-        self.conn.execute(
-            r#"INSERT INTO bookmarks_fts_content 
-               (bookmark_id, content, note_text, author_handle, author_name, tags_text)
-               VALUES (?1, ?2, ?3, ?4, ?5, ?6)"#,
-            params![
-                bookmark.id,
-                bookmark.content,
-                bookmark.note_text,
-                bookmark.author_handle,
-                bookmark.author_name,
-                tags_text,
-            ],
-        )?;
-
-        Ok(())
-    }
-
-    /// Full-text search across bookmarks
-    pub fn search(&self, query: &str, limit: usize) -> Result<Vec<Bookmark>> {
-        let query = Self::prepare_fts_query(query);
-
-        let mut stmt = self.conn.prepare(
-            r#"SELECT b.id, b.tweet_url, b.content, b.note_text, b.tweeted_at, b.imported_at,
-                      b.author_handle, b.author_name, b.author_profile_url, b.author_profile_image,
-                      b.comments, b.is_favorite
-               FROM bookmarks b
-               JOIN bookmarks_fts_content fc ON fc.bookmark_id = b.id
-               JOIN bookmarks_fts fts ON fts.rowid = fc.rowid
-               WHERE bookmarks_fts MATCH ?1
-               ORDER BY bm25(bookmarks_fts), b.tweeted_at DESC, b.id DESC
-               LIMIT ?2"#,
-        )?;
-
-        let mut bookmarks: Vec<Bookmark> = stmt
-            .query_map(params![query, limit as i64], |row| {
-                self.row_to_bookmark(row)
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        self.hydrate_bookmarks(&mut bookmarks)?;
-
-        Ok(bookmarks)
-    }
-
-    /// Prepare FTS5 query (add prefix matching for better UX)
-    fn prepare_fts_query(query: &str) -> String {
-        let terms: Vec<String> = query
-            .split_whitespace()
-            .map(|term| {
-                // Escape special FTS5 characters
-                let escaped = term.replace('"', "\"\"");
-                format!("\"{}\"*", escaped)
-            })
-            .collect();
-
-        terms.join(" ")
-    }
-
-    /// Get all bookmarks with pagination
-    pub fn get_bookmarks(&self, offset: usize, limit: usize) -> Result<Vec<Bookmark>> {
-        let overall_started = std::time::Instant::now();
-        let mut stmt = self.conn.prepare(
-            r#"SELECT id, tweet_url, content, note_text, tweeted_at, imported_at,
-                      author_handle, author_name, author_profile_url, author_profile_image,
-                      comments, is_favorite
-               FROM bookmarks
-               ORDER BY tweeted_at DESC, id DESC
-               LIMIT ?1 OFFSET ?2"#,
-        )?;
-
-        let query_started = std::time::Instant::now();
-        let mut bookmarks: Vec<Bookmark> = stmt
-            .query_map(params![limit as i64, offset as i64], |row| {
-                self.row_to_bookmark(row)
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-        let query_elapsed = query_started.elapsed();
-
-        let hydrate_started = std::time::Instant::now();
-        self.hydrate_bookmarks(&mut bookmarks)?;
-        eprintln!(
-            "[eterea][db][get_bookmarks] offset={} limit={} rows={} query={}ms hydrate={}ms total={}ms",
-            offset,
-            limit,
-            bookmarks.len(),
-            query_elapsed.as_millis(),
-            hydrate_started.elapsed().as_millis(),
-            overall_started.elapsed().as_millis()
-        );
-
-        Ok(bookmarks)
-    }
-
-    pub fn count_bookmarks(&self) -> Result<i64> {
-        self.conn
-            .query_row("SELECT COUNT(*) FROM bookmarks", [], |row| row.get(0))
-            .map_err(Into::into)
-    }
-
-    /// Get bookmarks by tag
-    pub fn get_bookmarks_by_tag(
-        &self,
-        tag: &str,
-        offset: usize,
-        limit: usize,
-    ) -> Result<Vec<Bookmark>> {
-        let mut stmt = self.conn.prepare(
-            r#"SELECT b.id, b.tweet_url, b.content, b.note_text, b.tweeted_at, b.imported_at,
-                      b.author_handle, b.author_name, b.author_profile_url, b.author_profile_image,
-                      b.comments, b.is_favorite
-               FROM bookmarks b
-               JOIN bookmark_tags bt ON bt.bookmark_id = b.id
-               JOIN tags t ON t.id = bt.tag_id
-               WHERE t.name = ?1
-               ORDER BY b.tweeted_at DESC, b.id DESC
-               LIMIT ?2 OFFSET ?3"#,
-        )?;
-
-        let mut bookmarks: Vec<Bookmark> = stmt
-            .query_map(params![tag, limit as i64, offset as i64], |row| {
-                self.row_to_bookmark(row)
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        self.hydrate_bookmarks(&mut bookmarks)?;
-
-        Ok(bookmarks)
-    }
-
-    /// Get bookmarks by author
-    pub fn get_bookmarks_by_author(
-        &self,
-        handle: &str,
-        offset: usize,
-        limit: usize,
-    ) -> Result<Vec<Bookmark>> {
-        let mut stmt = self.conn.prepare(
-            r#"SELECT id, tweet_url, content, note_text, tweeted_at, imported_at,
-                      author_handle, author_name, author_profile_url, author_profile_image,
-                      comments, is_favorite
-               FROM bookmarks
-               WHERE author_handle = ?1
-               ORDER BY tweeted_at DESC, id DESC
-               LIMIT ?2 OFFSET ?3"#,
-        )?;
-
-        let mut bookmarks: Vec<Bookmark> = stmt
-            .query_map(params![handle, limit as i64, offset as i64], |row| {
-                self.row_to_bookmark(row)
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        self.hydrate_bookmarks(&mut bookmarks)?;
-
-        Ok(bookmarks)
-    }
-
-    /// Get a single bookmark by ID
-    pub fn get_bookmark(&self, id: &str) -> Result<Option<Bookmark>> {
-        let mut stmt = self.conn.prepare(
-            r#"SELECT id, tweet_url, content, note_text, tweeted_at, imported_at,
-                      author_handle, author_name, author_profile_url, author_profile_image,
-                      comments, is_favorite
-               FROM bookmarks WHERE id = ?1"#,
-        )?;
-
-        let result = stmt.query_row(params![id], |row| self.row_to_bookmark(row));
-
-        match result {
-            Ok(mut bookmark) => {
-                bookmark.tags = self.load_bookmark_tags(&bookmark.id)?;
-                bookmark.media = self.load_bookmark_media(&bookmark.id)?;
-                Ok(Some(bookmark))
-            }
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    /// Delete a bookmark
-    pub fn delete_bookmark(&self, id: &str) -> Result<bool> {
-        let count = self
-            .conn
-            .execute("DELETE FROM bookmarks WHERE id = ?1", params![id])?;
-        if count > 0 {
-            self.refresh_stats_snapshot()?;
-        }
-        Ok(count > 0)
-    }
-
-    /// Toggle favorite status for a bookmark
-    pub fn toggle_favorite(&self, id: &str) -> Result<bool> {
-        self.conn.execute(
-            "UPDATE bookmarks SET is_favorite = NOT is_favorite WHERE id = ?1",
-            params![id],
-        )?;
-
-        // Return the new favorite status
-        let is_favorite: bool = self.conn.query_row(
-            "SELECT is_favorite FROM bookmarks WHERE id = ?1",
-            params![id],
-            |row| row.get(0),
-        )?;
-
-        self.refresh_stats_snapshot()?;
-        Ok(is_favorite)
-    }
-
-    /// Set favorite status for a bookmark
-    pub fn set_favorite(&self, id: &str, favorite: bool) -> Result<()> {
-        self.conn.execute(
-            "UPDATE bookmarks SET is_favorite = ?2 WHERE id = ?1",
-            params![id, favorite as i32],
-        )?;
-        self.refresh_stats_snapshot()?;
-        Ok(())
-    }
-
-    /// Get all favorite bookmarks
-    pub fn get_favorites(&self, offset: usize, limit: usize) -> Result<Vec<Bookmark>> {
-        let mut stmt = self.conn.prepare(
-            r#"SELECT id, tweet_url, content, note_text, tweeted_at, imported_at,
-                      author_handle, author_name, author_profile_url, author_profile_image,
-                      comments, is_favorite
-               FROM bookmarks
-               WHERE is_favorite = 1
-               ORDER BY tweeted_at DESC, id DESC
-               LIMIT ?1 OFFSET ?2"#,
-        )?;
-
-        let mut bookmarks: Vec<Bookmark> = stmt
-            .query_map(params![limit as i64, offset as i64], |row| {
-                self.row_to_bookmark(row)
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        self.hydrate_bookmarks(&mut bookmarks)?;
-
-        Ok(bookmarks)
-    }
-
-    /// Get bookmarks within a date range
-    pub fn get_bookmarks_by_date_range(
-        &self,
-        from: Option<chrono::DateTime<chrono::Utc>>,
-        to: Option<chrono::DateTime<chrono::Utc>>,
-        offset: usize,
-        limit: usize,
-    ) -> Result<Vec<Bookmark>> {
-        let from_ts = from.map(|d| d.timestamp()).unwrap_or(0);
-        let to_ts = to.map(|d| d.timestamp()).unwrap_or(i64::MAX);
-
-        let mut stmt = self.conn.prepare(
-            r#"SELECT id, tweet_url, content, note_text, tweeted_at, imported_at,
-                      author_handle, author_name, author_profile_url, author_profile_image,
-                      comments, is_favorite
-               FROM bookmarks
-               WHERE tweeted_at >= ?1 AND tweeted_at <= ?2
-               ORDER BY tweeted_at DESC, id DESC
-               LIMIT ?3 OFFSET ?4"#,
-        )?;
-
-        let mut bookmarks: Vec<Bookmark> = stmt
-            .query_map(
-                params![from_ts, to_ts, limit as i64, offset as i64],
-                |row| self.row_to_bookmark(row),
-            )?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        self.hydrate_bookmarks(&mut bookmarks)?;
-
-        Ok(bookmarks)
-    }
-
-    /// Advanced search with filters
-    #[allow(clippy::too_many_arguments)]
-    pub fn search_with_filters(
-        &self,
-        query: Option<&str>,
-        tag: Option<&str>,
-        author: Option<&str>,
-        from_date: Option<chrono::DateTime<chrono::Utc>>,
-        to_date: Option<chrono::DateTime<chrono::Utc>>,
-        favorites_only: bool,
-        has_media: Option<bool>,
-        limit: usize,
-    ) -> Result<Vec<Bookmark>> {
-        let (bookmarks, _) = self.search_with_filters_page(
-            query,
-            tag,
-            author,
-            from_date,
-            to_date,
-            favorites_only,
-            has_media,
-            0,
-            limit,
-        )?;
-
-        Ok(bookmarks)
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn search_with_filters_page(
-        &self,
-        query: Option<&str>,
-        tag: Option<&str>,
-        author: Option<&str>,
-        from_date: Option<chrono::DateTime<chrono::Utc>>,
-        to_date: Option<chrono::DateTime<chrono::Utc>>,
-        favorites_only: bool,
-        has_media: Option<bool>,
-        offset: usize,
-        limit: usize,
-    ) -> Result<(Vec<Bookmark>, i64)> {
-        let overall_started = std::time::Instant::now();
-        let (where_clause, mut params) = self.build_filtered_where_clause(
-            query,
-            tag,
-            author,
-            from_date,
-            to_date,
-            favorites_only,
-            has_media,
-        );
-
-        // Single query: data + total count via window function (no second COUNT query)
-        let mut sql = String::from(
-            r#"SELECT b.id, b.tweet_url, b.content, b.note_text, b.tweeted_at, b.imported_at,
-                      b.author_handle, b.author_name, b.author_profile_url, b.author_profile_image,
-                      b.comments, b.is_favorite,
-                      COUNT(*) OVER() AS total_count
-               FROM bookmarks b"#,
-        );
-        if !where_clause.is_empty() {
-            sql.push_str(" WHERE ");
-            sql.push_str(&where_clause);
-        }
-        sql.push_str(" ORDER BY b.tweeted_at DESC, b.id DESC LIMIT ? OFFSET ?");
-
-        params.push(Value::Integer(limit as i64));
-        params.push(Value::Integer(offset as i64));
-
-        let mut stmt = self.conn.prepare(&sql)?;
-        let query_started = std::time::Instant::now();
-
-        let mut total: i64 = 0;
-        let mut bookmarks = Vec::new();
-        let mut rows = stmt.query(params_from_iter(params.iter()))?;
-        while let Some(row) = rows.next()? {
-            // Named column access — safe against projection reordering
-            total = row.get::<_, i64>("total_count")?;
-            bookmarks.push(self.row_to_bookmark(row)?);
-        }
-        let query_elapsed = query_started.elapsed();
-
-        let hydrate_started = std::time::Instant::now();
-        self.hydrate_bookmarks(&mut bookmarks)?;
-        eprintln!(
-            "[eterea][db][search_with_filters_page] offset={} limit={} total={} rows={} query={}ms hydrate={}ms total={}ms",
-            offset,
-            limit,
-            total,
-            bookmarks.len(),
-            query_elapsed.as_millis(),
-            hydrate_started.elapsed().as_millis(),
-            overall_started.elapsed().as_millis()
-        );
-
-        Ok((bookmarks, total))
-    }
-
-    /// Build a WHERE clause using subqueries — no outer JOINs means no DISTINCT needed.
-    /// FTS and tag filters use IN-subqueries; has_media uses the denormalized column.
-    #[allow(clippy::too_many_arguments)]
-    fn build_filtered_where_clause(
-        &self,
-        query: Option<&str>,
-        tag: Option<&str>,
-        author: Option<&str>,
-        from_date: Option<chrono::DateTime<chrono::Utc>>,
-        to_date: Option<chrono::DateTime<chrono::Utc>>,
-        favorites_only: bool,
-        has_media: Option<bool>,
-    ) -> (String, Vec<Value>) {
-        let mut conditions = Vec::<String>::new();
-        let mut params = Vec::<Value>::new();
-
-        if let Some(q) = query {
-            if !q.trim().is_empty() {
-                // FTS via subquery: query the virtual table first (its optimized MATCH path),
-                // then look up bookmark_id via the rowid link to our content table.
-                // No outer JOIN → no row multiplication, no DISTINCT needed.
-                conditions.push(
-                    "b.id IN (SELECT fc.bookmark_id FROM bookmarks_fts fts \
-                     JOIN bookmarks_fts_content fc ON fc.rowid = fts.rowid \
-                     WHERE bookmarks_fts MATCH ?)"
-                        .to_string(),
-                );
-                params.push(Value::Text(Self::prepare_fts_query(q)));
-            }
-        }
-
-        if let Some(t) = tag {
-            // Tag via subquery: no outer JOIN, no row multiplication
-            conditions.push(
-                "b.id IN (SELECT bt.bookmark_id FROM bookmark_tags bt \
-                 JOIN tags t ON t.id = bt.tag_id WHERE t.name = ?)"
-                    .to_string(),
-            );
-            params.push(Value::Text(t.to_string()));
-        }
-
-        if let Some(a) = author {
-            conditions.push("b.author_handle = ?".to_string());
-            params.push(Value::Text(a.to_string()));
-        }
-
-        if let Some(from) = from_date {
-            conditions.push("b.tweeted_at >= ?".to_string());
-            params.push(Value::Integer(from.timestamp()));
-        }
-        if let Some(to) = to_date {
-            conditions.push("b.tweeted_at <= ?".to_string());
-            params.push(Value::Integer(to.timestamp()));
-        }
-
-        if favorites_only {
-            conditions.push("b.is_favorite = 1".to_string());
-        }
-
-        if let Some(has) = has_media {
-            // Use denormalized column — no JOIN needed
-            conditions.push(format!("b.has_media = {}", if has { 1 } else { 0 }));
-        }
-
-        (conditions.join(" AND "), params)
-    }
-
-    fn hydrate_bookmarks(&self, bookmarks: &mut [Bookmark]) -> Result<()> {
-        if bookmarks.is_empty() {
-            return Ok(());
-        }
-
-        let overall_started = std::time::Instant::now();
-        let bookmark_ids = bookmarks
-            .iter()
-            .map(|bookmark| bookmark.id.clone())
-            .collect::<Vec<_>>();
-        let tags_started = std::time::Instant::now();
-        let tags_by_bookmark = self.load_tags_for_bookmarks(&bookmark_ids)?;
-        let tags_elapsed = tags_started.elapsed();
-        let media_started = std::time::Instant::now();
-        let media_by_bookmark = self.load_media_for_bookmarks(&bookmark_ids)?;
-        let media_elapsed = media_started.elapsed();
-
-        for bookmark in bookmarks {
-            bookmark.tags = tags_by_bookmark
-                .get(&bookmark.id)
-                .cloned()
-                .unwrap_or_default();
-            bookmark.media = media_by_bookmark
-                .get(&bookmark.id)
-                .cloned()
-                .unwrap_or_default();
-        }
-        eprintln!(
-            "[eterea][db][hydrate_bookmarks] bookmarks={} tags={}ms media={}ms total={}ms",
-            bookmark_ids.len(),
-            tags_elapsed.as_millis(),
-            media_elapsed.as_millis(),
-            overall_started.elapsed().as_millis()
-        );
-        Ok(())
-    }
-
-    fn load_tags_for_bookmarks(
-        &self,
-        bookmark_ids: &[String],
-    ) -> Result<HashMap<String, Vec<String>>> {
-        if bookmark_ids.is_empty() {
-            return Ok(HashMap::new());
-        }
-
-        let placeholders = vec!["?"; bookmark_ids.len()].join(", ");
-        let sql = format!(
-            r#"SELECT bt.bookmark_id, t.name
-               FROM bookmark_tags bt
-               JOIN tags t ON t.id = bt.tag_id
-               WHERE bt.bookmark_id IN ({placeholders})
-               ORDER BY bt.bookmark_id, t.name"#
-        );
-        let params = bookmark_ids
-            .iter()
-            .cloned()
-            .map(Value::Text)
-            .collect::<Vec<_>>();
-        let mut stmt = self.conn.prepare(&sql)?;
-        let mut rows = stmt.query(params_from_iter(params.iter()))?;
-        let mut tags_by_bookmark = HashMap::<String, Vec<String>>::new();
-
-        while let Some(row) = rows.next()? {
-            let bookmark_id: String = row.get(0)?;
-            let tag: String = row.get(1)?;
-            tags_by_bookmark.entry(bookmark_id).or_default().push(tag);
-        }
-
-        Ok(tags_by_bookmark)
-    }
-
-    fn load_media_for_bookmarks(
-        &self,
-        bookmark_ids: &[String],
-    ) -> Result<HashMap<String, Vec<Media>>> {
-        if bookmark_ids.is_empty() {
-            return Ok(HashMap::new());
-        }
-
-        let placeholders = vec!["?"; bookmark_ids.len()].join(", ");
-        let sql = format!(
-            r#"SELECT bookmark_id, url, media_type
-               FROM media
-               WHERE bookmark_id IN ({placeholders})
-               ORDER BY bookmark_id, id"#
-        );
-        let params = bookmark_ids
-            .iter()
-            .cloned()
-            .map(Value::Text)
-            .collect::<Vec<_>>();
-        let mut stmt = self.conn.prepare(&sql)?;
-        let mut rows = stmt.query(params_from_iter(params.iter()))?;
-        let mut media_by_bookmark = HashMap::<String, Vec<Media>>::new();
-
-        while let Some(row) = rows.next()? {
-            let bookmark_id: String = row.get(0)?;
-            let url: String = row.get(1)?;
-            let media_type = match row.get::<_, String>(2)?.as_str() {
-                "image" => MediaType::Image,
-                "video" => MediaType::Video,
-                "gif" => MediaType::Gif,
-                _ => MediaType::Unknown,
-            };
-
-            media_by_bookmark
-                .entry(bookmark_id)
-                .or_default()
-                .push(Media { url, media_type });
-        }
-
-        Ok(media_by_bookmark)
-    }
-
-    /// Get author directory summaries ordered by bookmark count.
-    pub fn get_all_authors(&self) -> Result<Vec<AuthorStats>> {
-        let mut stmt = self.conn.prepare(
-            r#"SELECT author_handle,
-                      COALESCE(NULLIF(author_name, ''), author_handle) AS author_name,
-                      MAX(author_profile_image) AS author_profile_image,
-                      COUNT(*) AS bookmark_count,
-                      SUM(CASE WHEN is_favorite = 1 THEN 1 ELSE 0 END) AS favorite_count
-               FROM bookmarks
-               GROUP BY author_handle
-               ORDER BY bookmark_count DESC, author_handle ASC"#,
-        )?;
-
-        let authors = stmt
-            .query_map([], |row| {
-                Ok(AuthorStats {
-                    handle: row.get(0)?,
-                    name: row.get(1)?,
-                    profile_image: row.get(2)?,
-                    bookmark_count: row.get(3)?,
-                    favorite_count: row.get(4)?,
-                })
-            })?
-            .filter_map(|row| row.ok())
-            .collect();
-
-        Ok(authors)
-    }
-
-    /// Get all unique tags with counts
-    pub fn get_all_tags(&self) -> Result<Vec<(String, i64)>> {
-        let mut stmt = self.conn.prepare(
-            r#"SELECT t.name, COUNT(bt.bookmark_id) as count
-               FROM tags t
-               LEFT JOIN bookmark_tags bt ON bt.tag_id = t.id
-               GROUP BY t.id
-               ORDER BY count DESC"#,
-        )?;
-
-        let tags = stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        Ok(tags)
-    }
-
-    /// Get database statistics
-    pub fn get_stats(&self) -> Result<BookmarkStats> {
-        let overall_started = std::time::Instant::now();
-        if let Some(snapshot) = self.get_metadata(STATS_SNAPSHOT_METADATA_KEY)? {
-            if let Ok(stats) = serde_json::from_str::<BookmarkStats>(&snapshot) {
-                eprintln!(
-                    "[eterea][db][get_stats] snapshot-hit total={}ms",
-                    overall_started.elapsed().as_millis()
-                );
-                return Ok(stats);
-            }
-        }
-
-        let compute_started = std::time::Instant::now();
-        let stats = self.compute_stats()?;
-        self.persist_stats_snapshot(&stats)?;
-        eprintln!(
-            "[eterea][db][get_stats] recompute compute={}ms total={}ms",
-            compute_started.elapsed().as_millis(),
-            overall_started.elapsed().as_millis()
-        );
-        Ok(stats)
-    }
-
-    fn compute_stats(&self) -> Result<BookmarkStats> {
-        let total_bookmarks: i64 =
-            self.conn
-                .query_row("SELECT COUNT(*) FROM bookmarks", [], |row| row.get(0))?;
-
-        let unique_authors: i64 = self.conn.query_row(
-            "SELECT COUNT(DISTINCT author_handle) FROM bookmarks",
-            [],
-            |row| row.get(0),
-        )?;
-
-        let unique_tags: i64 = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM tags", [], |row| row.get(0))?;
-
-        let favorite_bookmarks: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM bookmarks WHERE is_favorite = 1",
-            [],
-            |row| row.get(0),
-        )?;
-
-        let earliest_date =
-            self.conn
-                .query_row("SELECT MIN(tweeted_at) FROM bookmarks", [], |row| {
-                    row.get::<_, Option<i64>>(0)
-                })?;
-
-        let latest_date =
-            self.conn
-                .query_row("SELECT MAX(tweeted_at) FROM bookmarks", [], |row| {
-                    row.get::<_, Option<i64>>(0)
-                })?;
-
-        let top_tags = self.get_all_tags()?;
-
-        use chrono::TimeZone;
-
-        Ok(BookmarkStats {
-            total_bookmarks,
-            unique_authors,
-            unique_tags,
-            favorite_bookmarks,
-            earliest_date: earliest_date.map(|ts| chrono::Utc.timestamp_opt(ts, 0).unwrap()),
-            latest_date: latest_date.map(|ts| chrono::Utc.timestamp_opt(ts, 0).unwrap()),
-            top_tags,
-        })
-    }
-
-    fn persist_stats_snapshot(&self, stats: &BookmarkStats) -> Result<()> {
-        let payload = serde_json::to_string(stats).map_err(|error| {
-            Error::Other(format!("Failed to serialize stats snapshot: {error}"))
-        })?;
-        self.set_metadata(STATS_SNAPSHOT_METADATA_KEY, &payload)
-    }
-
-    fn refresh_stats_snapshot(&self) -> Result<()> {
-        let stats = self.compute_stats()?;
-        self.persist_stats_snapshot(&stats)
-    }
-
-    /// Convert a database row to a Bookmark
-    fn row_to_bookmark(&self, row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
-        use chrono::TimeZone;
-
-        let id: String = row.get(0)?;
-        let tweeted_at_ts: i64 = row.get(4)?;
-        let imported_at_ts: i64 = row.get(5)?;
-        let is_favorite: i32 = row.get(11).unwrap_or(0);
-
-        let bookmark = Bookmark {
-            id: id.clone(),
-            tweet_url: row.get(1)?,
-            content: row.get(2)?,
-            note_text: row.get(3)?,
-            tweeted_at: chrono::Utc.timestamp_opt(tweeted_at_ts, 0).unwrap(),
-            imported_at: chrono::Utc.timestamp_opt(imported_at_ts, 0).unwrap(),
-            author_handle: row.get(6)?,
-            author_name: row.get(7)?,
-            author_profile_url: row.get(8)?,
-            author_profile_image: row.get(9)?,
-            comments: row.get(10)?,
-            tags: Vec::new(),
-            media: Vec::new(),
-            is_favorite: is_favorite != 0,
-            search_text: String::new(),
-        };
-
-        // Note: tags and media are loaded separately for performance
-        // Use load_bookmark_tags() and load_bookmark_media() when needed
-
-        Ok(bookmark)
-    }
-
-    /// Load tags for a bookmark
-    pub fn load_bookmark_tags(&self, bookmark_id: &str) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
-            r#"SELECT t.name FROM tags t
-               JOIN bookmark_tags bt ON bt.tag_id = t.id
-               WHERE bt.bookmark_id = ?1"#,
-        )?;
-
-        let tags = stmt
-            .query_map(params![bookmark_id], |row| row.get::<_, String>(0))?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        Ok(tags)
-    }
-
-    /// Load media for a bookmark
-    pub fn load_bookmark_media(&self, bookmark_id: &str) -> Result<Vec<Media>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT url, media_type FROM media WHERE bookmark_id = ?1")?;
-
-        let media = stmt
-            .query_map(params![bookmark_id], |row| {
-                let url: String = row.get(0)?;
-                let media_type_str: String = row.get(1)?;
-                let media_type = match media_type_str.as_str() {
-                    "image" => MediaType::Image,
-                    "video" => MediaType::Video,
-                    "gif" => MediaType::Gif,
-                    _ => MediaType::Unknown,
-                };
-                Ok(Media { url, media_type })
-            })?
-            .filter_map(|r| r.ok())
-            .collect();
-
-        Ok(media)
-    }
-
-    /// Store lightweight app metadata as JSON/text.
-    pub fn set_metadata(&self, key: &str, value: &str) -> Result<()> {
-        self.conn.execute(
-            r#"INSERT INTO app_metadata (key, value)
-               VALUES (?1, ?2)
-               ON CONFLICT(key) DO UPDATE SET value = excluded.value"#,
-            params![key, value],
-        )?;
-        Ok(())
-    }
-
-    /// Read lightweight app metadata.
-    pub fn get_metadata(&self, key: &str) -> Result<Option<String>> {
-        let result = self.conn.query_row(
-            "SELECT value FROM app_metadata WHERE key = ?1",
-            params![key],
-            |row| row.get::<_, String>(0),
-        );
-
-        match result {
-            Ok(value) => Ok(Some(value)),
-            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-            Err(error) => Err(error.into()),
-        }
-    }
+    pub(super) conn: Connection,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::BookmarkBuilder;
+    use crate::models::{Bookmark, BookmarkBuilder};
     use chrono::{TimeZone, Utc};
 
     fn sample_bookmark(
@@ -1069,6 +38,36 @@ mod tests {
         }
 
         builder.build().unwrap()
+    }
+
+    fn insert_bookmark_with_invalid_tweeted_at(db: &Database, id: &str) {
+        db.conn
+            .execute(
+                r#"INSERT INTO bookmarks
+                   (id, tweet_url, content, note_text, tweeted_at, imported_at,
+                    author_handle, author_name, author_profile_url, author_profile_image,
+                    comments, is_favorite, has_media)
+                   VALUES (?1, ?2, 'bad persisted timestamp', NULL, ?3, 0,
+                           'corrupt_author', 'Corrupt Author', NULL, NULL, NULL, 0, 0)"#,
+                rusqlite::params![
+                    id,
+                    format!("https://x.com/corrupt_author/status/{id}"),
+                    i64::MAX
+                ],
+            )
+            .unwrap();
+    }
+
+    fn assert_invalid_timestamp_error<T>(result: crate::Result<T>) {
+        let error = match result {
+            Ok(_) => panic!("expected invalid timestamp error"),
+            Err(error) => error,
+        };
+        let message = error.to_string();
+        assert!(
+            message.contains("timestamp") || message.contains("out of range"),
+            "expected invalid timestamp error, got: {message}"
+        );
     }
 
     #[test]
@@ -1153,6 +152,45 @@ mod tests {
     }
 
     #[test]
+    fn get_bookmarks_returns_error_when_persisted_timestamp_is_invalid() {
+        // Given: a persisted bookmark row whose timestamp cannot be represented as UTC.
+        let db = Database::open_memory().unwrap();
+        insert_bookmark_with_invalid_tweeted_at(&db, "invalid-list");
+
+        // When: the page/list read maps persisted rows into bookmark models.
+        let result = db.get_bookmarks(0, 10);
+
+        // Then: the row-mapping error is returned instead of silently dropping the row.
+        assert_invalid_timestamp_error(result);
+    }
+
+    #[test]
+    fn get_bookmark_returns_error_when_persisted_timestamp_is_invalid() {
+        // Given: a persisted bookmark row whose timestamp cannot be represented as UTC.
+        let db = Database::open_memory().unwrap();
+        insert_bookmark_with_invalid_tweeted_at(&db, "invalid-direct");
+
+        // When: direct lookup maps the persisted row into a bookmark model.
+        let result = db.get_bookmark("invalid-direct");
+
+        // Then: the row-mapping error is returned without panicking.
+        assert_invalid_timestamp_error(result);
+    }
+
+    #[test]
+    fn get_stats_returns_error_when_persisted_timestamp_is_invalid() {
+        // Given: a persisted bookmark row whose timestamp cannot be represented as UTC.
+        let db = Database::open_memory().unwrap();
+        insert_bookmark_with_invalid_tweeted_at(&db, "invalid-stats");
+
+        // When: stats compute the persisted bookmark date range.
+        let result = db.get_stats();
+
+        // Then: the invalid timestamp is returned as an error without panicking.
+        assert_invalid_timestamp_error(result);
+    }
+
+    #[test]
     fn stats_snapshot_stays_fresh_after_writes() {
         let db = Database::open_memory().unwrap();
         let first = sample_bookmark(
@@ -1186,5 +224,68 @@ mod tests {
         assert_eq!(after_delete.total_bookmarks, 1);
         assert_eq!(after_delete.unique_authors, 1);
         assert_eq!(after_delete.favorite_bookmarks, 1);
+    }
+
+    #[test]
+    fn author_stats_snapshot_stays_hot_after_writes() {
+        let db = Database::open_memory().unwrap();
+        let first = sample_bookmark(
+            "1",
+            "alice",
+            Utc.with_ymd_and_hms(2024, 5, 1, 12, 0, 0).unwrap(),
+            "rust",
+            false,
+        );
+        let second = sample_bookmark(
+            "2",
+            "alice",
+            Utc.with_ymd_and_hms(2024, 5, 2, 12, 0, 0).unwrap(),
+            "rust",
+            false,
+        );
+        let third = sample_bookmark(
+            "3",
+            "bob",
+            Utc.with_ymd_and_hms(2024, 5, 3, 12, 0, 0).unwrap(),
+            "systems",
+            false,
+        );
+
+        db.insert_bookmarks(&[first.clone(), second.clone(), third.clone()])
+            .unwrap();
+
+        let initial = db.get_all_authors().unwrap();
+        assert_eq!(initial.len(), 2);
+        assert_eq!(initial[0].handle, "alice");
+        assert_eq!(initial[0].bookmark_count, 2);
+        assert_eq!(initial[0].favorite_count, 0);
+
+        db.toggle_favorite(&first.id).unwrap();
+        let after_favorite = db.get_all_authors().unwrap();
+        let alice = after_favorite
+            .iter()
+            .find(|author| author.handle == "alice")
+            .unwrap();
+        assert_eq!(alice.favorite_count, 1);
+
+        db.delete_bookmark(&second.id).unwrap();
+        let after_delete = db.get_all_authors().unwrap();
+        let alice = after_delete
+            .iter()
+            .find(|author| author.handle == "alice")
+            .unwrap();
+        assert_eq!(alice.bookmark_count, 1);
+        assert_eq!(alice.favorite_count, 1);
+    }
+
+    #[test]
+    fn database_sets_explicit_busy_timeout() {
+        let db = Database::open_memory().unwrap();
+        let busy_timeout_ms: i64 = db
+            .conn
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .unwrap();
+
+        assert_eq!(busy_timeout_ms, SQLITE_BUSY_TIMEOUT.as_millis() as i64);
     }
 }

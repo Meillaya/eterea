@@ -1,0 +1,61 @@
+name: Bug report
+description: Report a reproducible defect in Eterea.
+title: "bug: "
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+      placeholder: Describe the defect and affected area.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include exact commands, inputs, or UI actions.
+      placeholder: |
+        1. Run `nix develop`
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead? Include logs or screenshots if useful.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: Commit SHA, tag, or branch where the bug appears.
+      placeholder: "commit SHA or branch"
+    validations:
+      required: false
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, desktop/session details, GPU if relevant, and whether you used `nix develop`.
+      placeholder: "OS, shell, Nix status, hardware notes"
+    validations:
+      required: false
+  - type: textarea
+    id: privacy
+    attributes:
+      label: Privacy and media notes
+      description: Redact credentials, personal data, and private media before attaching logs, screenshots, or recordings.
+      placeholder: "Confirm attachments are redacted or say none attached."
+    validations:
+      required: false

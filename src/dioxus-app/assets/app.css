@@ -47,6 +47,15 @@
 .density-comfy { --density-page-pad: 24px; --density-gap: 22px; --density-panel-pad: 28px; }
 
 * { box-sizing: border-box; }
+html,
+body,
+#main {
+  width: 100%;
+  min-height: 100%;
+}
+html {
+  background: var(--paper-bg);
+}
 body {
   margin: 0;
   background: var(--paper-bg);

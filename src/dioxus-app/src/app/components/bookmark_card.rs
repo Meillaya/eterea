@@ -15,13 +15,30 @@ pub(crate) fn BookmarkCard(
     remote_images_enabled: bool,
     on_enable_remote_images: EventHandler<()>,
 ) -> Element {
-    let expand_id = bookmark.id.clone();
-    let detail_id = bookmark.id.clone();
-    let favorite_id = bookmark.id.clone();
-    let delete_id = bookmark.id.clone();
-    let tweeted_at = format_timestamp(&bookmark.tweeted_at.to_rfc3339());
-    let media_count = bookmark.media.len();
-    let favorite_label = if bookmark.is_favorite {
+    let Bookmark {
+        id,
+        tweet_url,
+        content,
+        note_text,
+        tweeted_at,
+        imported_at,
+        author_handle,
+        author_name,
+        tags,
+        media,
+        is_favorite,
+        ..
+    } = bookmark;
+    let expand_id = id.clone();
+    let detail_id = id.clone();
+    let favorite_id = id.clone();
+    let delete_id = id.clone();
+    let filter_author = author_handle.clone();
+    let context_label = format!("@{author_handle} tweet");
+    let tweeted_at = format_timestamp(&tweeted_at);
+    let imported_at = format_timestamp(&imported_at);
+    let media_count = media.len();
+    let favorite_label = if is_favorite {
         "★ Favorited"
     } else {
         "☆ Favorite"
@@ -36,31 +53,31 @@ pub(crate) fn BookmarkCard(
                 div {
                     button {
                         class: "author-button",
-                        onclick: move |event| { event.stop_propagation(); on_filter_author.call(bookmark.author_handle.clone()); },
-                        "@{bookmark.author_handle}"
+                        onclick: move |event| { event.stop_propagation(); on_filter_author.call(filter_author.clone()); },
+                        "@{author_handle}"
                     }
-                    span { "{bookmark.author_name}" }
+                    span { "{author_name}" }
                 }
                 span { "{tweeted_at}" }
             }
-            p { class: "bookmark-content", "{bookmark.content}" }
-            if let Some(note) = &bookmark.note_text {
+            p { class: "bookmark-content", "{content}" }
+            if let Some(note) = &note_text {
                 p { class: "bookmark-note", "{note}" }
             }
-            if !bookmark.tags.is_empty() {
+            if !tags.is_empty() {
                 div {
                     class: "tag-list",
-                    for tag in &bookmark.tags {
+                    for tag in &tags {
                         span { class: "mini-tag", "#{tag}" }
                     }
                 }
             }
 
             MediaGallery {
-                media: bookmark.media.clone(),
+                media,
                 remote_images_enabled,
                 on_enable_remote_images,
-                context_label: format!("@{} tweet", bookmark.author_handle),
+                context_label,
                 mode: if expanded { MediaGalleryMode::Detail } else { MediaGalleryMode::Compact },
             }
 
@@ -69,7 +86,7 @@ pub(crate) fn BookmarkCard(
                     class: "inline-detail",
                     div {
                         div { class: "detail-metric", span { "Tweeted" } strong { "{tweeted_at}" } }
-                        div { class: "detail-metric", span { "Imported" } strong { "{format_timestamp(&bookmark.imported_at.to_rfc3339())}" } }
+                        div { class: "detail-metric", span { "Imported" } strong { "{imported_at}" } }
                         div { class: "detail-metric", span { "Media" } strong { "{media_count}" } }
                     }
                     p { "Click again to collapse · use j/k or arrow keys to move between entries · Esc clears the open entry." }
@@ -80,7 +97,7 @@ pub(crate) fn BookmarkCard(
                 div {
                     class: "bookmark-stats",
                     span { "{media_count} media" }
-                    span { "Imported {format_timestamp(&bookmark.imported_at.to_rfc3339())}" }
+                    span { "Imported {imported_at}" }
                 }
                 button {
                     class: "ghost-button small",
@@ -94,7 +111,7 @@ pub(crate) fn BookmarkCard(
                     class: "ghost-button small",
                     onclick: move |event| {
                         event.stop_propagation();
-                        if let Err(error) = open_external_url(&bookmark.tweet_url) {
+                        if let Err(error) = open_external_url(&tweet_url) {
                             eprintln!("failed to open external URL: {error}");
                         }
                     },

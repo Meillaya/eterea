@@ -1,0 +1,42 @@
+name: Release checklist
+description: Track local release readiness without assuming external repository settings.
+title: "release: "
+body:
+  - type: textarea
+    id: scope
+    attributes:
+      label: Release scope
+      description: Summarize the release goal, target version, and notable changes.
+      placeholder: "Target version, major changes, and release owner."
+    validations:
+      required: true
+  - type: checkboxes
+    id: local_checks
+    attributes:
+      label: Local checks
+      description: Confirm local validation before any hosted release action.
+      options:
+        - label: Ran the required checks from `nix develop` or documented exceptions.
+          required: true
+        - label: Reviewed performance risk and attached measurement evidence if relevant.
+          required: true
+        - label: Confirmed privacy/media notes are current and no sensitive artifacts are attached.
+          required: true
+        - label: Updated screenshots, recordings, or docs when user-visible behavior changed.
+          required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Link repo-local evidence files, commands, screenshots, or release-readiness notes.
+      placeholder: "Evidence paths and command summaries."
+    validations:
+      required: true
+  - type: textarea
+    id: risks
+    attributes:
+      label: Remaining risks
+      description: Known issues, deferred QA, or rollout notes.
+      placeholder: "None, or list risks and mitigations."
+    validations:
+      required: false

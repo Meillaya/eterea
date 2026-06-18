@@ -149,3 +149,15 @@ impl Default for LibraryState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn library_state_keeps_remote_images_off_by_default() {
+        let state = LibraryState::default();
+
+        assert!(!state.remote_images_enabled);
+    }
+}

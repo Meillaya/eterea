@@ -1,0 +1,51 @@
+name: Feature request
+description: Propose a focused improvement for Eterea.
+title: "feature: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or workflow
+      description: What user need or workflow should this improve?
+      placeholder: Describe the user-facing problem, not only the implementation idea.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What should Eterea do differently?
+      placeholder: Describe the smallest useful behavior change.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What simpler or different approaches did you consider?
+    validations:
+      required: false
+  - type: textarea
+    id: performance
+    attributes:
+      label: Performance impact
+      description: Expected impact on startup, memory, rendering, storage, or background work.
+      placeholder: "No expected impact, or describe likely cost and measurement plan."
+    validations:
+      required: false
+  - type: textarea
+    id: privacy_media
+    attributes:
+      label: Privacy and media impact
+      description: Note any new data, telemetry, screenshots, recordings, file access, or media handling.
+      placeholder: "No new privacy/media impact, or describe the change."
+    validations:
+      required: false
+  - type: textarea
+    id: validation
+    attributes:
+      label: Validation idea
+      description: How would we verify the feature works?
+      placeholder: "Tests, manual QA, screenshots, or performance measurements."
+    validations:
+      required: false

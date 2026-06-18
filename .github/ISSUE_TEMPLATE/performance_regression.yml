@@ -1,0 +1,54 @@
+name: Performance regression
+description: Report slower startup, rendering, storage, memory, or benchmark behavior.
+title: "perf: "
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Regression summary
+      description: What got slower or heavier?
+      placeholder: "Startup time increased, UI stutters, memory grows, query slowed, etc."
+    validations:
+      required: true
+  - type: textarea
+    id: baseline
+    attributes:
+      label: Baseline vs current
+      description: Compare a known-good commit/version with the regressed commit/version.
+      placeholder: |
+        Baseline: commit/version, command, result
+        Current: commit/version, command, result
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction commands
+      description: Include exact commands, fixtures, or UI steps. Prefer commands run from `nix develop` when possible.
+      placeholder: |
+        nix develop
+        command ...
+    validations:
+      required: true
+  - type: textarea
+    id: measurements
+    attributes:
+      label: Measurements and artifacts
+      description: Paste summarized timings or attach logs/screenshots. Redact private data.
+      placeholder: "Timings, memory, CPU, screenshots, recordings, or profiling notes."
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, CPU/GPU, memory, power mode, display/session, and other factors that may affect performance.
+    validations:
+      required: false
+  - type: textarea
+    id: suspected_change
+    attributes:
+      label: Suspected change
+      description: Link or name the commit, PR, or area if known. Leave blank if unknown.
+    validations:
+      required: false

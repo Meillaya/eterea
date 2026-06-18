@@ -181,35 +181,66 @@ fixtures/perf/
   small/   # ~20 bookmarks
   medium/  # ~500 bookmarks
   large/   # ~10k bookmarks
-  stress/  # ~50k bookmarks
+  stress/  # generated stress-lab archives; do not commit large data
 ```
 
 Performance output layout:
 
 ```text
-.omx/artifacts/perf/eterea-full-app/
-  baseline.json
-  baseline.md
-  optimization-report.json
-  optimization-report.md
+target/eterea/perf/
+  performance_baseline.json
+  performance_large_archive.json
+  performance_author_directory.json
+  stress-lab/
+    performance_stress_lab_<count>.json
+  perf_environment.json
 ```
 
 Suggested runner shapes, without requiring new dependencies:
 
 ```bash
-cargo test -p eterea-app --test performance_baseline -- --nocapture
-# or
 scripts/perf-baseline.sh
+scripts/perf-baseline.sh --stress <count-from-fixtures/perf/stress-tiers.txt>
 ```
 
-Budgets copied from the approved test spec:
+Current automated guardrails record 7 deterministic samples per service path
+and emit min/median/p95/max JSON summaries. They remain dev guardrails unless a
+release owner records target hardware, file-backed storage mode, and
+`release_evidence=true`.
 
-- Warm 10k library page p95 < 100ms.
-- Search p95 < 150ms on 10k fixture.
-- Author/topic indexes p95 < 100ms on 10k fixture.
-- Stress 50k search p95 < 500ms or documented waiver.
-- Import 10k entries < 10s on dev machine.
-- First usable shell < 1.5s after process start on dev machine.
+Performance evidence classes:
+
+| Class | Purpose | Minimum sample contract | Required metadata |
+| --- | --- | --- | --- |
+| Dev guardrail | Fast local regression check for known service budgets. | 7 deterministic samples with median, p95, min, max, sample count, and pass/fail budget; `release_evidence=false`. | Budget name, fixture size, `storage_mode`, generated dataset metadata, environment metadata, and generated report path. |
+| Stress-lab | Explicit large-count lab run from `fixtures/perf/stress-tiers.txt`. | 7-run minimum before comparing trends; record median, p95, min, max, and sample count for every service path or UI interaction under review. | Hardware, OS/kernel, Rust toolchain, cold/warm classification, storage mode, memory ceiling when available, and `release_evidence=false`. |
+| Release evidence | Release-owner sign-off on target hardware/profile. | 7-run minimum for each service path and UI interaction; report median, p95, min, max, and sample count, with failed/outlier runs retained or explained. | Hardware/kernel/Rust metadata, cargo profile, cold/warm classification, `storage_mode` such as file-backed SQLite/WAL, pass/fail budget, report timestamp, and `release_evidence=true`. |
+
+Use `cold` only for first-run/process-start paths with caches intentionally
+empty. Use `warm` for repeated interaction/service-path samples after setup has
+completed. A mixed run must split cold and warm samples into separate records
+instead of averaging them together.
+
+- Warm 10k library page single-run guardrail < 100ms; release evidence keeps
+  this budget anchor but must measure 7 warm samples and report median/p95/min/max.
+- Search single-run guardrail < 150ms on 10k fixture; release evidence keeps
+  this budget anchor but must measure 7 warm samples and report median/p95/min/max.
+- Author/topic index single-run guardrail < 100ms on 10k fixture; release
+  evidence keeps this budget anchor but must measure 7 warm samples and report
+  median/p95/min/max.
+- Import 10k entries single-run guardrail < 10s on dev machine; release
+  evidence keeps this budget anchor but must measure 7 samples and report
+  median/p95/min/max.
+- Stress tiers are defined in `fixtures/perf/stress-tiers.txt`; lower tiers are
+  intermediate lab gates, and the largest tier is the strategic
+  production-grade stress target.
+- Stress-lab reports live under `target/eterea/perf/stress-lab/` and include
+  `release_evidence=false`; they are not release-blocking until fixture
+  generation mode, memory ceiling, hardware, cold/warm run classification,
+  pass/fail budgets, and file-backed SQLite/WAL follow-up evidence are recorded.
+- First usable shell < 1.5s after process start on dev machine is a proposed UI
+  interaction budget until measured with the same 7-run release evidence
+  contract.
 
 Trigger `$performance-goal` if a screen/API path misses budget without a narrow local fix.
 

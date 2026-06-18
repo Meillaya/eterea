@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-workspace:
+    name: Rust workspace verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+      - name: Cache Cargo registry, git, and target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Rust formatting
+        run: nix develop -c cargo fmt --all -- --check
+
+      - name: Rust clippy
+        run: nix develop -c cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Rust tests
+        run: nix develop -c cargo test --workspace
+
+      - name: Dioxus release build
+        run: nix develop -c cargo build -p eterea-dioxus --release
+
+      - name: Performance baseline
+        run: nix develop -c scripts/perf-baseline.sh

@@ -1,240 +1,194 @@
-use eterea_app::{AppServices, BookmarkQuery};
-use std::fs;
-use std::path::PathBuf;
-use std::time::{Duration, Instant};
+#[path = "performance_baseline/data.rs"]
+mod data;
+#[path = "performance_baseline/file_backed.rs"]
+mod file_backed;
+#[path = "performance_baseline/measure.rs"]
+mod measure;
+#[path = "performance_baseline/report.rs"]
+mod report;
+#[path = "performance_baseline/report_environment.rs"]
+mod report_environment;
+#[path = "performance_baseline/schema.rs"]
+mod schema;
+#[path = "performance_baseline/stress.rs"]
+mod stress;
 
+use std::error::Error;
+use std::fs;
+use std::io;
+use std::time::Duration;
+
+use measure::{archive_metrics, author_directory_metric, run_archive_paths};
+use report::{assert_bounded, duration_stats, write_report, MetricKey, MetricSamples, ReportSpec};
+use schema::assert_report_schema;
+
+pub(crate) const SAMPLE_COUNT: usize = 7;
 const GENERATED_COUNT: usize = 500;
 const LARGE_GENERATED_COUNT: usize = 10_000;
+const AUTHOR_HEAVY_GENERATED_COUNT: usize = 10_000;
 
-fn repo_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("app crate should have repo parent")
-        .parent()
-        .expect("src directory should have repo parent")
-        .to_path_buf()
+type TestResult<T> = Result<T, Box<dyn Error>>;
+
+fn invalid_data(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message.into())
 }
 
-fn generated_archive(count: usize) -> String {
-    let mut out = String::from("[");
-    for i in 0..count {
-        if i > 0 {
-            out.push(',');
-        }
-        let handle = format!("author{}", i % 25);
-        let tag = match i % 5 {
-            0 => "rust",
-            1 => "design",
-            2 => "systems",
-            3 => "performance",
-            _ => "ai",
-        };
-        let media = if i % 7 == 0 {
-            format!(
-                r#","extended_media":[{{"media_url_https":"https://pbs.twimg.com/media/{i}.jpg"}}]"#
-            )
-        } else {
-            String::new()
-        };
-        out.push_str(&format!(
-            r#"{{"screen_name":"{handle}","name":"Author {handle}","full_text":"Generated bookmark {i} about #{tag} and local-first archives","tweeted_at":"2024-05-{day:02}T12:00:00Z","tweet_url":"https://x.com/{handle}/status/{i}"{media}}}"#,
-            day = (i % 28) + 1,
-        ));
+fn sampled_archive_report(
+    report_name: &str,
+    filename: &str,
+    generated_count: usize,
+    include_stats: bool,
+    classification: &str,
+    extra_dataset_json: &str,
+    specs: &[(MetricKey, u64)],
+) -> TestResult<()> {
+    let mut samples = Vec::with_capacity(SAMPLE_COUNT);
+    for _ in 0..SAMPLE_COUNT {
+        samples.push(run_archive_paths(generated_count, filename, include_stats)?);
     }
-    out.push(']');
-    out
+    let metrics = archive_metrics(&samples, specs)?;
+    assert_metric_budgets(&metrics)?;
+    let report_path = write_report(
+        &ReportSpec {
+            name: report_name,
+            generated_count,
+            input_generation: "deterministic-json-string",
+            classification,
+            release_evidence: false,
+            storage_mode: "in-memory-sqlite",
+            extra_dataset_json,
+        },
+        &metrics,
+    )?;
+    eprintln!(
+        "statistical performance report: name={report_name} count={generated_count} sample_count={SAMPLE_COUNT} report={}",
+        report_path.display()
+    );
+    Ok(())
 }
 
-fn assert_bounded(label: &str, elapsed: Duration, max: Duration) {
-    assert!(
-        elapsed <= max,
-        "{label} took {:?}, expected <= {:?}",
-        elapsed,
-        max
-    );
+fn assert_metric_budgets(metrics: &[MetricSamples]) -> TestResult<()> {
+    for metric in metrics {
+        let stats = duration_stats(&metric.samples)?;
+        assert_bounded(
+            metric.key.as_str(),
+            Duration::from_millis(u64::try_from(stats.p95)?),
+            Duration::from_millis(metric.budget_ms),
+        );
+    }
+    Ok(())
 }
 
 #[test]
-fn performance_baseline_for_current_service_paths() {
-    let archive = generated_archive(GENERATED_COUNT);
-    let services = AppServices::open_memory().expect("in-memory services should open");
-
-    let import_started = Instant::now();
-    let imported = services
-        .import_content("generated.json", &archive)
-        .expect("generated archive should import");
-    let import_elapsed = import_started.elapsed();
-    assert_eq!(imported, GENERATED_COUNT);
-
-    let list_started = Instant::now();
-    let first_page = services
-        .list_bookmarks(0, 48)
-        .expect("first library page should load");
-    let list_elapsed = list_started.elapsed();
-    assert_eq!(first_page.items.len(), 48);
-
-    let search_started = Instant::now();
-    let search_page = services
-        .query_bookmarks(&BookmarkQuery {
-            query: Some("rust".to_string()),
-            limit: 48,
-            ..BookmarkQuery::default()
-        })
-        .expect("search query should load");
-    let search_elapsed = search_started.elapsed();
-    assert!(!search_page.items.is_empty());
-
-    let stats_started = Instant::now();
-    let stats = services.stats().expect("stats should load");
-    let stats_elapsed = stats_started.elapsed();
-    assert_eq!(stats.total_bookmarks, GENERATED_COUNT as i64);
-    assert!(stats.unique_authors > 1);
-    assert!(!stats.top_tags.is_empty());
-
-    // Loose guardrails catch accidental pathological regressions without making
-    // normal development machines fail on small timing variance. Release budgets
-    // are stricter and live in docs/design-system.md.
-    assert_bounded(
-        "import 500 generated bookmarks",
-        import_elapsed,
-        Duration::from_secs(5),
-    );
-    assert_bounded("list first page", list_elapsed, Duration::from_secs(1));
-    assert_bounded("search first page", search_elapsed, Duration::from_secs(1));
-    assert_bounded("stats", stats_elapsed, Duration::from_secs(1));
-
-    let report_dir = repo_root().join("target/eterea/perf");
-    fs::create_dir_all(&report_dir).expect("performance report directory should be created");
-    let report_path = report_dir.join("performance_baseline.json");
-    fs::write(
-        &report_path,
-        format!(
-            concat!(
-                "{{\n",
-                "  \"generated_count\": {count},\n",
-                "  \"import_ms\": {import_ms},\n",
-                "  \"list_ms\": {list_ms},\n",
-                "  \"search_ms\": {search_ms},\n",
-                "  \"stats_ms\": {stats_ms}\n",
-                "}}\n"
-            ),
-            count = GENERATED_COUNT,
-            import_ms = import_elapsed.as_millis(),
-            list_ms = list_elapsed.as_millis(),
-            search_ms = search_elapsed.as_millis(),
-            stats_ms = stats_elapsed.as_millis(),
-        ),
+fn performance_baseline_for_current_service_paths() -> TestResult<()> {
+    sampled_archive_report(
+        "performance_baseline",
+        "generated.json",
+        GENERATED_COUNT,
+        true,
+        "dev-guardrail",
+        "",
+        &[
+            (MetricKey::Import, 5_000),
+            (MetricKey::List, 1_000),
+            (MetricKey::Search, 1_000),
+            (MetricKey::Stats, 1_000),
+        ],
     )
-    .expect("performance report should be written");
-
-    eprintln!(
-        "performance baseline: count={GENERATED_COUNT} import={}ms list={}ms search={}ms stats={}ms report={}",
-        import_elapsed.as_millis(),
-        list_elapsed.as_millis(),
-        search_elapsed.as_millis(),
-        stats_elapsed.as_millis(),
-        report_path.display()
-    );
 }
 
 #[test]
-fn large_archive_budget_for_release_paths() {
-    let archive = generated_archive(LARGE_GENERATED_COUNT);
-    let services = AppServices::open_memory().expect("in-memory services should open");
-
-    let import_started = Instant::now();
-    let imported = services
-        .import_content("generated-large.json", &archive)
-        .expect("large generated archive should import");
-    let import_elapsed = import_started.elapsed();
-    assert_eq!(imported, LARGE_GENERATED_COUNT);
-
-    let list_started = Instant::now();
-    let first_page = services
-        .list_bookmarks(0, 48)
-        .expect("first library page should load");
-    let list_elapsed = list_started.elapsed();
-    assert_eq!(first_page.items.len(), 48);
-
-    let search_started = Instant::now();
-    let search_page = services
-        .query_bookmarks(&BookmarkQuery {
-            query: Some("rust".to_string()),
-            limit: 48,
-            ..BookmarkQuery::default()
-        })
-        .expect("search query should load");
-    let search_elapsed = search_started.elapsed();
-    assert!(!search_page.items.is_empty());
-
-    let author_started = Instant::now();
-    let authors = services.author_index().expect("author index should load");
-    let author_elapsed = author_started.elapsed();
-    assert!(!authors.is_empty());
-
-    let topic_started = Instant::now();
-    let topics = services.topic_index().expect("topic index should load");
-    let topic_elapsed = topic_started.elapsed();
-    assert!(!topics.is_empty());
-
-    assert_bounded(
-        "import 10k generated bookmarks",
-        import_elapsed,
-        Duration::from_secs(10),
-    );
-    assert_bounded(
-        "warm 10k library page",
-        list_elapsed,
-        Duration::from_millis(100),
-    );
-    assert_bounded("10k search", search_elapsed, Duration::from_millis(150));
-    assert_bounded(
-        "10k author index",
-        author_elapsed,
-        Duration::from_millis(100),
-    );
-    assert_bounded("10k topic index", topic_elapsed, Duration::from_millis(100));
-
-    let report_dir = repo_root().join("target/eterea/perf");
-    fs::create_dir_all(&report_dir).expect("performance report directory should be created");
-    let report_path = report_dir.join("performance_large_archive.json");
-    fs::write(
-        &report_path,
-        format!(
-            concat!(
-                "{{\n",
-                "  \"generated_count\": {count},\n",
-                "  \"import_ms\": {import_ms},\n",
-                "  \"list_ms\": {list_ms},\n",
-                "  \"search_ms\": {search_ms},\n",
-                "  \"author_index_ms\": {author_ms},\n",
-                "  \"topic_index_ms\": {topic_ms},\n",
-                "  \"budgets\": {{\n",
-                "    \"import_ms\": 10000,\n",
-                "    \"list_ms\": 100,\n",
-                "    \"search_ms\": 150,\n",
-                "    \"author_index_ms\": 100,\n",
-                "    \"topic_index_ms\": 100\n",
-                "  }}\n",
-                "}}\n"
-            ),
-            count = LARGE_GENERATED_COUNT,
-            import_ms = import_elapsed.as_millis(),
-            list_ms = list_elapsed.as_millis(),
-            search_ms = search_elapsed.as_millis(),
-            author_ms = author_elapsed.as_millis(),
-            topic_ms = topic_elapsed.as_millis(),
-        ),
+#[ignore = "stress-lab target; run via scripts/perf-baseline.sh --stress <count>"]
+fn stress_archive_report_for_configured_count() -> TestResult<()> {
+    let count = stress::selected_stress_count()?;
+    let extra_dataset_json = stress::stress_dataset_extra_json()?;
+    sampled_archive_report(
+        &format!("stress-lab/performance_stress_lab_{count}"),
+        "generated-stress.json",
+        count,
+        false,
+        "stress-lab",
+        &extra_dataset_json,
+        &[
+            (MetricKey::Import, 60_000),
+            (MetricKey::List, 1_000),
+            (MetricKey::Search, 1_000),
+            (MetricKey::AuthorIndex, 1_000),
+            (MetricKey::TopicIndex, 1_000),
+        ],
     )
-    .expect("large performance report should be written");
+}
 
+#[test]
+fn large_archive_budget_for_release_paths() -> TestResult<()> {
+    sampled_archive_report(
+        "performance_large_archive",
+        "generated-large.json",
+        LARGE_GENERATED_COUNT,
+        false,
+        "dev-guardrail",
+        "",
+        &[
+            (MetricKey::Import, 10_000),
+            (MetricKey::List, 100),
+            (MetricKey::Search, 150),
+            (MetricKey::AuthorIndex, 100),
+            (MetricKey::TopicIndex, 100),
+        ],
+    )
+}
+
+#[test]
+fn high_cardinality_author_directory_budget() -> TestResult<()> {
+    let metrics = vec![author_directory_metric(AUTHOR_HEAVY_GENERATED_COUNT, 100)?];
+    assert_metric_budgets(&metrics)?;
+    let report_path = write_report(
+        &ReportSpec {
+            name: "performance_author_directory",
+            generated_count: AUTHOR_HEAVY_GENERATED_COUNT,
+            input_generation: "deterministic-author-heavy-json-string",
+            classification: "dev-guardrail",
+            release_evidence: false,
+            storage_mode: "in-memory-sqlite",
+            extra_dataset_json: ", \"cardinality\": \"unique-author-per-bookmark\"",
+        },
+        &metrics,
+    )?;
     eprintln!(
-        "large performance baseline: count={LARGE_GENERATED_COUNT} import={}ms list={}ms search={}ms author_index={}ms topic_index={}ms report={}",
-        import_elapsed.as_millis(),
-        list_elapsed.as_millis(),
-        search_elapsed.as_millis(),
-        author_elapsed.as_millis(),
-        topic_elapsed.as_millis(),
+        "author directory statistical report: count={AUTHOR_HEAVY_GENERATED_COUNT} sample_count={SAMPLE_COUNT} report={}",
         report_path.display()
     );
+    Ok(())
+}
+
+#[test]
+fn statistical_report_schema_contract_contains_required_fields() -> TestResult<()> {
+    let metrics = vec![MetricSamples {
+        key: MetricKey::Import,
+        budget_ms: 1_000,
+        samples: vec![
+            Duration::from_millis(1),
+            Duration::from_millis(2),
+            Duration::from_millis(3),
+            Duration::from_millis(4),
+            Duration::from_millis(5),
+            Duration::from_millis(6),
+            Duration::from_millis(7),
+        ],
+    }];
+    let report_path = write_report(
+        &ReportSpec {
+            name: "schema_regression/performance_schema_regression",
+            generated_count: SAMPLE_COUNT,
+            input_generation: "deterministic-schema-regression",
+            classification: "schema-regression",
+            release_evidence: false,
+            storage_mode: "in-memory-sqlite",
+            extra_dataset_json: ", \"schema_case\": \"required-statistical-fields\"",
+        },
+        &metrics,
+    )?;
+    let report = fs::read_to_string(report_path)?;
+    assert_report_schema(&report, &[MetricKey::Import])?;
+    Ok(())
 }

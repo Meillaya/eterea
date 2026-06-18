@@ -1,0 +1,90 @@
+name: Draft Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: draft-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build artifacts and create draft release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - name: Validate release ref
+        run: |
+          case "${GITHUB_REF}" in
+            refs/tags/v*) ;;
+            *) echo "::error::Draft releases require a v* tag ref"; exit 1 ;;
+          esac
+
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Cache Cargo registry, git, and target
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build release binary
+        run: nix develop -c cargo build -p eterea-dioxus --release
+
+      - name: Assemble artifact bundle
+        run: |
+          set -eu
+          artifact_dir="release-artifacts/eterea-${GITHUB_REF_NAME}-${RUNNER_OS}-${RUNNER_ARCH}"
+          mkdir -p "${artifact_dir}"
+          cp target/release/eterea-dioxus "${artifact_dir}/"
+          cat > "${artifact_dir}/PROVENANCE.md" <<EOF
+          # Eterea draft release artifact provenance
+
+          - Source ref: ${GITHUB_REF}
+          - Source commit: ${GITHUB_SHA}
+          - Workflow run: ${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}
+          - Runner: ${RUNNER_OS}/${RUNNER_ARCH}
+          - Build command: nix develop -c cargo build -p eterea-dioxus --release
+          - Signing/notarization: not performed by this draft workflow
+          EOF
+          (cd "${artifact_dir}" && sha256sum eterea-dioxus PROVENANCE.md > SHA256SUMS.txt)
+          tar -C release-artifacts -czf "${artifact_dir}.tar.gz" "$(basename "${artifact_dir}")"
+          (cd release-artifacts && sha256sum "$(basename "${artifact_dir}").tar.gz" > "$(basename "${artifact_dir}").tar.gz.sha256")
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: eterea-${{ github.ref_name }}-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            release-artifacts/*.tar.gz
+            release-artifacts/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            release-artifacts/*.tar.gz \
+            release-artifacts/*.sha256 \
+            --draft \
+            --title "Eterea ${GITHUB_REF_NAME}" \
+            --notes "Draft release generated from ${GITHUB_SHA}. See artifact PROVENANCE.md and SHA256SUMS.txt inside the archive."

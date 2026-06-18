@@ -1,55 +1,57 @@
 # Eterea
 
-**Eterea is a local-first Rust/Dioxus desktop archive for X/Twitter bookmarks:**
-import exported bookmarks, keep them in local SQLite, and read them through a
-fast editorial desktop interface.
+Eterea is a quiet, local-first reading room for X/Twitter bookmarks. Import an
+export, keep it in SQLite on your own machine, then browse it through a fast
+keyboard-friendly Dioxus desktop app.
 
-Status: [CI](https://github.com/Meillaya/eterea/actions/workflows/ci.yml) · [MIT License](LICENSE) · [Rust workspace](Cargo.toml) ·
-[Dioxus UI](src/dioxus-app/) · [release: local artifacts / draft workflow planned](docs/operations/release-readiness.md) · [privacy: local-first](#privacy-model)
+It is built for people who save too much and want the archive to feel useful
+again: search it, slice it by author or topic, favorite things, inspect media
+only when you ask for it, and move through the library without a browser tab
+trying to become another inbox.
 
-## Features
+<p align="center">
+  <img src="docs/assets/previews/library-preview.png" alt="Eterea library table view" width="49%" />
+  <img src="docs/assets/previews/dashboard-preview.png" alt="Eterea dashboard view" width="49%" />
+</p>
 
-- Import CSV, JSON, and X archive JavaScript bookmark exports with dry-run
-  previews before writing.
-- Store the archive locally in SQLite under the platform app-data directory.
-- Search text and filter by author, topic, date, media, and favorites.
-- Read through editorial layouts: Issue, Front Page, Long-Read, and Spread.
-- Browse data-backed entry detail, author directory, topic directory, and
-  filtered archive routes.
-- Keep remote tweet image previews hidden by default; enabling them is a
-  session-only choice that may request stored HTTPS media URLs.
+Status: [CI](https://github.com/Meillaya/eterea/actions/workflows/ci.yml) · [MIT License](LICENSE) · [Rust workspace](Cargo.toml) · [Dioxus UI](src/dioxus-app/) · [privacy: local-first](#privacy-model)
+
+## What it does
+
+- Imports CSV, JSON, and X archive JavaScript bookmark exports.
+- Previews an import before it writes anything.
+- Stores everything locally in SQLite under the platform app-data directory.
+- Searches text and filters by author, topic, date, media, and favorites.
+- Offers terminal-style library views: table, tree, dashboard, graph, and calendar.
+- Opens entry detail, author, topic, search, import, and settings routes from the same desktop shell.
+- Keeps remote tweet images hidden by default; loading them is a session-only choice.
 
 ## Privacy model
 
-Eterea is local-first: imported bookmark data stays on your machine in local
-SQLite. Direct X sync, browser companion/server mode, and background remote media
-fetching are not part of this desktop release surface. Public preview assets must
-use synthetic or local fixture data only; see the
-[preview asset contract](docs/assets/previews/README.md).
+Eterea does not sync with X, phone home, or run a background companion service.
+Imported bookmark data stays on your machine. Text is rendered as text, not raw
+HTML. Stored media URLs are treated cautiously: previews are hidden unless you
+explicitly enable them, and external opening is limited to explicit HTTPS user
+actions.
 
-Treat every imported bookmark field as untrusted user-controlled data, including
-tweet URLs, content, note text, author handles/names, tags, comments, profile
-URLs, and media URLs. The UI renders text through Dioxus text nodes rather than
-raw HTML, remote image previews stay off by default, previewable media must be
-HTTPS, and external URL opening is limited to explicit HTTPS user actions.
-Generated artifacts under `.omo/`, `.omx/`, `target/`, and preview-generation
-scratch paths are also untrusted until reviewed; do not publish them as README
-assets unless they are synthetic/local-fixture outputs recorded in the preview
-provenance log.
+If you are preparing public screenshots, use a reviewed fixture profile or a
+maintainer-approved preview archive. Do not accidentally publish private notes,
+real reading history, tokens, hostnames, or local filesystem paths.
 
 ## Quick start
 
-The supported development environment is Nix because the workspace needs native
-system libraries such as OpenSSL/pkg-config.
+The easiest supported development path is Nix, because the desktop app needs a
+few native system libraries.
 
 ```bash
 nix develop
 nix develop -c cargo run -p eterea-dioxus
 ```
 
-## Verify
+Plain `cargo run -p eterea-dioxus` can work on machines that already have the
+native desktop dependencies installed, but Nix is the reproducible path.
 
-Run CI-equivalent Rust gates plus the local docs-link checker before proposing or shipping changes:
+## Verify before shipping
 
 ```bash
 nix develop -c cargo fmt --all -- --check
@@ -59,17 +61,15 @@ nix develop -c cargo build -p eterea-dioxus --release
 python scripts/check-doc-links.py README.md 'docs/**/*.md'
 ```
 
-## Release and workflow status
+CI runs the Rust gates. The docs-link checker is still a local release check.
 
-- CI exists at [`.github/workflows/ci.yml`](.github/workflows/ci.yml) and covers
-  the Rust format, lint, test, release build, and performance baseline gates.
-- The docs-link checker remains a local verification step via
-  `python scripts/check-doc-links.py README.md 'docs/**/*.md'`.
-- Public release packaging is not claimed complete: signed installers,
-  notarization, live desktop screenshots, and percentile performance evidence
-  remain release-owner follow-ups.
-- Current release gates, waivers, and evidence classes are documented in
-  [release readiness](docs/operations/release-readiness.md).
+## Project map
+
+- `src/backend/` — storage, ingestion, search, stats, and migrations.
+- `src/app/` — application service layer used by the desktop UI and tests.
+- `src/dioxus-app/` — Dioxus desktop shell and UI.
+- `docs/` — architecture, workflow, design-system, preview, and release notes.
+- `fixtures/` — local test fixtures for import and guardrail coverage.
 
 ## Documentation
 
@@ -77,7 +77,7 @@ python scripts/check-doc-links.py README.md 'docs/**/*.md'
 - [Architecture](docs/architecture.md)
 - [Development workflow](docs/development.md)
 - [Design system](docs/design-system.md)
-- [Preview asset contract](docs/assets/previews/README.md)
+- [Preview asset notes](docs/assets/previews/README.md)
 - [Release readiness](docs/operations/release-readiness.md)
 
 ## License

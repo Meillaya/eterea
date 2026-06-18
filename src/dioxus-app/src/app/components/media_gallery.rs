@@ -8,14 +8,12 @@ use eterea_core::models::{Media, MediaType};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MediaGalleryMode {
-    Compact,
     Detail,
 }
 
 impl MediaGalleryMode {
     fn class_name(self) -> &'static str {
         match self {
-            Self::Compact => "media-gallery compact",
             Self::Detail => "media-gallery detail",
         }
     }

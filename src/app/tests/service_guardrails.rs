@@ -1,4 +1,5 @@
 use eterea_app::{AppServices, BookmarkQuery};
+use std::collections::{BTreeMap, BTreeSet};
 use tempfile::NamedTempFile;
 
 const SAMPLE_JSON: &str = include_str!("../../../fixtures/import/bookmarks.json");
@@ -12,6 +13,13 @@ fn imported_services(filename: &str, content: &str) -> AppServices {
         .expect("fixture import should succeed");
     assert!(imported > 0, "fixture should import bookmarks");
     services
+}
+
+fn handles_for(page: &eterea_app::BookmarkPage) -> BTreeSet<String> {
+    page.items
+        .iter()
+        .map(|bookmark| bookmark.author_handle.clone())
+        .collect()
 }
 
 #[test]
@@ -259,4 +267,150 @@ fn media_hydrates_across_list_search_filter_and_reopen() {
         .items
         .iter()
         .all(|bookmark| !bookmark.media.is_empty()));
+}
+
+#[test]
+fn local_fixture_parity_locks_import_search_filters_stats_and_reopen() {
+    let file = NamedTempFile::new().expect("temp db file should exist");
+    let path = file.path().to_path_buf();
+    drop(file);
+
+    let bea_id = {
+        let services = AppServices::open(&path).expect("disk-backed services should open");
+        let imported = services
+            .import_content("bookmarks.json", SAMPLE_JSON)
+            .expect("json import should succeed");
+        assert_eq!(imported, 3, "fixture import count is the parity baseline");
+
+        let duplicate_import = services
+            .import_content("bookmarks.json", SAMPLE_JSON)
+            .expect("duplicate import should be handled without mutation");
+        assert_eq!(
+            duplicate_import, 0,
+            "duplicate import should skip already persisted tweet URLs"
+        );
+
+        let all = services
+            .list_bookmarks(0, 10)
+            .expect("all bookmarks should load after import");
+        assert_eq!(all.total, 3);
+        assert_eq!(
+            handles_for(&all),
+            ["ada_dev", "bea_design", "cy_ops"]
+                .into_iter()
+                .map(String::from)
+                .collect(),
+            "fixture authors must remain stable for UI route guardrails"
+        );
+
+        let stats = services.stats().expect("stats should load after import");
+        assert_eq!(stats.total_bookmarks, 3);
+        assert_eq!(stats.unique_authors, 3);
+        assert_eq!(stats.unique_tags, 4);
+        assert_eq!(stats.favorite_bookmarks, 0);
+
+        let top_tags: BTreeMap<_, _> = stats.top_tags.into_iter().collect();
+        assert_eq!(top_tags.get("rust"), Some(&1));
+        assert_eq!(top_tags.get("architecture"), Some(&1));
+        assert_eq!(top_tags.get("design"), Some(&1));
+        assert_eq!(top_tags.get("ops"), Some(&1));
+
+        let rust = services
+            .query_bookmarks(&BookmarkQuery {
+                query: Some("rust".to_string()),
+                limit: 10,
+                ..BookmarkQuery::default()
+            })
+            .expect("rust search should load");
+        assert_eq!(handles_for(&rust), BTreeSet::from(["ada_dev".to_string()]));
+
+        let design = services
+            .query_bookmarks(&BookmarkQuery {
+                tag: Some("design".to_string()),
+                limit: 10,
+                ..BookmarkQuery::default()
+            })
+            .expect("tag filter should load");
+        assert_eq!(
+            handles_for(&design),
+            BTreeSet::from(["bea_design".to_string()])
+        );
+
+        let bea_day = services
+            .query_bookmarks(&BookmarkQuery {
+                from_date: Some("2026-05-02T00:00:00Z".to_string()),
+                to_date: Some("2026-05-02T23:59:59Z".to_string()),
+                limit: 10,
+                ..BookmarkQuery::default()
+            })
+            .expect("date filter should load");
+        assert_eq!(
+            handles_for(&bea_day),
+            BTreeSet::from(["bea_design".to_string()])
+        );
+
+        let with_media = services
+            .query_bookmarks(&BookmarkQuery {
+                has_media: Some(true),
+                limit: 10,
+                ..BookmarkQuery::default()
+            })
+            .expect("media filter should load");
+        assert_eq!(
+            handles_for(&with_media),
+            ["ada_dev", "cy_ops"]
+                .into_iter()
+                .map(String::from)
+                .collect()
+        );
+
+        let bea = services
+            .query_bookmarks(&BookmarkQuery {
+                author: Some("bea_design".to_string()),
+                limit: 10,
+                ..BookmarkQuery::default()
+            })
+            .expect("author filter should load")
+            .items
+            .into_iter()
+            .next()
+            .expect("bea fixture bookmark should exist");
+        services
+            .toggle_favorite(&bea.id)
+            .expect("favorite toggle should succeed");
+
+        let favorites = services
+            .query_bookmarks(&BookmarkQuery {
+                favorites_only: true,
+                limit: 10,
+                ..BookmarkQuery::default()
+            })
+            .expect("favorites filter should load");
+        assert_eq!(
+            handles_for(&favorites),
+            BTreeSet::from(["bea_design".to_string()])
+        );
+
+        bea.id
+    };
+
+    let reopened = AppServices::open(&path).expect("reopened services should open");
+    let reopened_stats = reopened.stats().expect("stats should reload from disk");
+    assert_eq!(reopened_stats.total_bookmarks, 3);
+    assert_eq!(
+        reopened_stats.favorite_bookmarks, 1,
+        "favorite mutation must persist across app/service restart"
+    );
+
+    let reopened_favorites = reopened
+        .query_bookmarks(&BookmarkQuery {
+            favorites_only: true,
+            limit: 10,
+            ..BookmarkQuery::default()
+        })
+        .expect("reopened favorites should load");
+    assert!(reopened_favorites
+        .items
+        .iter()
+        .any(|bookmark| bookmark.id == bea_id && bookmark.is_favorite));
 }

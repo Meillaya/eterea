@@ -15,6 +15,15 @@ pub(crate) enum ScreenRoute {
     Topic(String),
 }
 
+pub(crate) const TERMINAL_TOP_TABS: [(&str, &str); 6] = [
+    ("library", "library"),
+    ("authors", "authors"),
+    ("topics", "topics"),
+    ("search", "search"),
+    ("import", "import"),
+    ("settings", "settings"),
+];
+
 impl ScreenRoute {
     pub(crate) fn parse(value: &str) -> Self {
         if let Some(id) = value.strip_prefix("entry:") {
@@ -82,5 +91,28 @@ mod tests {
         assert_eq!(ScreenRoute::Entry("1".to_string()).nav_id(), "library");
         assert_eq!(ScreenRoute::Author("alice".to_string()).nav_id(), "authors");
         assert_eq!(ScreenRoute::Topic("rust".to_string()).nav_id(), "topics");
+    }
+
+    #[test]
+    fn terminal_top_tabs_match_design_html_navigation_contract() {
+        assert_eq!(
+            super::TERMINAL_TOP_TABS,
+            [
+                ("library", "library"),
+                ("authors", "authors"),
+                ("topics", "topics"),
+                ("search", "search"),
+                ("import", "import"),
+                ("settings", "settings"),
+            ]
+        );
+
+        for (route_id, expected_nav_id) in super::TERMINAL_TOP_TABS {
+            assert_eq!(
+                ScreenRoute::parse(route_id).nav_id(),
+                expected_nav_id,
+                "{route_id} should remain reachable from the terminal top tab bar"
+            );
+        }
     }
 }

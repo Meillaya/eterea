@@ -1,4 +1,4 @@
-use super::super::state::{Filters, LibraryState};
+use super::super::state::LibraryState;
 use chrono::{Local, LocalResult, NaiveDate, TimeZone, Utc};
 use eterea_app::BookmarkQuery;
 
@@ -52,24 +52,10 @@ fn normalize_date_boundary(value: &str, end_of_day: bool) -> Option<String> {
     Some(local_boundary.with_timezone(&Utc).to_rfc3339())
 }
 
-pub(crate) fn count_active_filters(filters: &Filters) -> usize {
-    [
-        !filters.query.trim().is_empty(),
-        !filters.author_query.trim().is_empty(),
-        !filters.from_date.trim().is_empty(),
-        !filters.to_date.trim().is_empty(),
-        filters.selected_tag.is_some(),
-        filters.favorites_only,
-        filters.has_media_only,
-    ]
-    .into_iter()
-    .filter(|active| *active)
-    .count()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::state::Filters;
     use chrono::{DateTime, Timelike};
 
     #[test]
@@ -120,20 +106,5 @@ mod tests {
         assert_eq!(query.has_media, Some(true));
         assert_eq!(query.offset, 48);
         assert_eq!(query.limit, 24);
-    }
-
-    #[test]
-    fn count_active_filters_includes_new_controls() {
-        let filters = Filters {
-            query: "rust".to_string(),
-            author_query: "alice".to_string(),
-            from_date: "2024-05-01".to_string(),
-            to_date: "2024-05-31".to_string(),
-            selected_tag: Some("lang".to_string()),
-            favorites_only: true,
-            has_media_only: true,
-        };
-
-        assert_eq!(count_active_filters(&filters), 7);
     }
 }

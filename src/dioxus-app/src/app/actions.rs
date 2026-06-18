@@ -1,5 +1,6 @@
 mod expanded;
 mod import_flow;
+mod keyboard;
 mod query;
 
 pub(crate) use expanded::{
@@ -9,7 +10,9 @@ pub(crate) use import_flow::{
     apply_import_error, apply_import_preview, apply_import_success, mark_importing,
     set_import_source,
 };
-pub(crate) use query::count_active_filters;
+pub(crate) use keyboard::{
+    enter_focus_scope, handle_global_keyboard, leave_focus_scope, navigate_terminal_tab,
+};
 
 use super::route::ScreenRoute;
 use super::state::{LibraryState, Services};

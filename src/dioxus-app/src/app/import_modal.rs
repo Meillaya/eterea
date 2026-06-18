@@ -1,9 +1,9 @@
 use super::actions::{
-    apply_import_error, apply_import_preview, apply_import_success, mark_importing, reload_library,
-    set_import_source,
+    apply_import_error, apply_import_preview, apply_import_success, enter_focus_scope,
+    leave_focus_scope, mark_importing, reload_library, set_import_source,
 };
 use super::route::ScreenRoute;
-use super::state::{ImportStage, LibraryState, Services};
+use super::state::{FocusScope, ImportStage, LibraryState, Services};
 use dioxus::prelude::*;
 use std::path::PathBuf;
 
@@ -62,6 +62,8 @@ pub(crate) fn import_modal(mut state: Signal<LibraryState>, services: Services) 
                     r#type: "text",
                     value: "{import_state.path}",
                     placeholder: "/home/you/Downloads/bookmarks.json",
+                    onfocus: move |_| enter_focus_scope(&mut state, FocusScope::ImportForm),
+                    onblur: move |_| leave_focus_scope(&mut state, FocusScope::ImportForm),
                     oninput: move |event| {
                         let mut next = state.write();
                         set_import_source(&mut next.import, event.value(), None);

@@ -1,47 +1,60 @@
+use super::actions::{enter_focus_scope, leave_focus_scope};
 use super::route::ScreenRoute;
-use super::state::LibraryState;
+use super::state::{FocusScope, LibraryState};
 use dioxus::prelude::*;
 
 pub(crate) fn onboarding_screen(mut state: Signal<LibraryState>) -> Element {
+    let ascii = r#"
+  ┌─ eterea ───────────────────────────────┐
+  │ local archive · terminal library        │
+  │ import once, search in milliseconds     │
+  └─────────────────────────────────────────┘
+"#;
+
     rsx! {
-        div { class: "onboarding-screen",
-            p { class: "eyebrow", "The room is empty" }
-            h3 { "Welcome." }
-            p { class: "muted-copy onboarding-copy", "Eterea is a local-first reading room for bookmarks from X. Nothing leaves your machine: export your archive, preview it here, then read in Issue, Front Page, Long-Read, or Spread mode." }
+        div { class: "onboarding-screen terminal-onboarding",
+            pre { class: "onboarding-ascii", "{ascii}" }
+            p { class: "eyebrow", "first run" }
+            h3 { "Bring an export in, and the room becomes searchable." }
+            p { class: "muted-copy onboarding-copy", "Eterea is local-first: export from X, preview the archive here, then browse with table/tree/dashboard/graph/calendar views. No telemetry, no remote sync, no production credentials." }
             div { class: "onboarding-steps",
                 article {
-                    strong { "I." }
-                    h4 { "Export from X" }
-                    p { "Settings → Your account → Download an archive. The bookmarks.js file is the primary target." }
+                    strong { "1." }
+                    h4 { "export from x" }
+                    p { "Settings → Your account → download an archive." }
                 }
                 article {
-                    strong { "II." }
-                    h4 { "Preview locally" }
-                    p { "CSV, JSON, and X archive JS are parsed before anything is written to SQLite." }
+                    strong { "2." }
+                    h4 { "preview locally" }
+                    p { "CSV, JSON, and bookmarks.js are parsed before anything is written." }
                 }
                 article {
-                    strong { "III." }
-                    h4 { "Read quietly" }
-                    p { "Search with /, navigate cards with j/k, and keep useful entries in Favorites." }
+                    strong { "3." }
+                    h4 { "drive by keyboard" }
+                    p { "Use 1..6 for tabs, / for search, : for commands, ? for help." }
                 }
             }
-            div { class: "onboarding-actions",
+            div { class: "onboarding-actions terminal-actions",
                 button {
                     class: "accent-button",
+                    onfocus: move |_| enter_focus_scope(&mut state, FocusScope::OnboardingAction),
+                    onblur: move |_| leave_focus_scope(&mut state, FocusScope::OnboardingAction),
                     onclick: move |_| {
                         let mut next = state.write();
                         next.route = ScreenRoute::Import;
                         next.import.open = true;
                     },
-                    "Begin import"
+                    "begin import"
                 }
                 button {
                     class: "ghost-button",
+                    onfocus: move |_| enter_focus_scope(&mut state, FocusScope::OnboardingAction),
+                    onblur: move |_| leave_focus_scope(&mut state, FocusScope::OnboardingAction),
                     onclick: move |_| state.write().route = ScreenRoute::Library,
-                    "Browse empty library"
+                    "browse empty library"
                 }
             }
-            p { class: "muted-copy tiny", "Local-first · no telemetry · MIT-licensed · built with Rust, Dioxus, and SQLite." }
+            p { class: "muted-copy tiny", "local-first · no telemetry · MIT-licensed · Rust · Dioxus · SQLite" }
         }
     }
 }

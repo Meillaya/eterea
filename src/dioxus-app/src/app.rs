@@ -2,7 +2,6 @@ mod actions;
 mod author_directory;
 mod components;
 mod design_system;
-mod hero_filters;
 mod import_modal;
 mod onboarding;
 mod route;
@@ -15,7 +14,7 @@ mod settings;
 mod shell;
 mod state;
 
-use actions::{count_active_filters, load_initial_state};
+use actions::{handle_global_keyboard, load_initial_state};
 use design_system::shell_classes;
 use dioxus::prelude::*;
 use eterea_app::AppServices;
@@ -52,17 +51,20 @@ pub fn App() -> Element {
             };
         }
     };
-    let state = use_signal(|| load_initial_state(&services));
+    let mut state = use_signal(|| load_initial_state(&services));
 
     let snapshot = state.read();
-    let status_message = snapshot.status.clone();
-    let shell_class = shell_classes(snapshot.appearance.paper_tone, snapshot.appearance.density);
-    let filters = snapshot.filters.clone();
-    let has_active_filters = count_active_filters(&filters) > 0;
+    let palette_open = snapshot.shell.palette_open;
+    let keybindings_open = snapshot.shell.keybindings_open;
+    let shell_class = shell_classes(
+        snapshot.appearance.paper_tone,
+        snapshot.appearance.density,
+        snapshot.appearance.font,
+        snapshot.appearance.weight,
+        snapshot.appearance.accent_choice,
+    );
     let import_open = snapshot.import.open;
     let route = snapshot.route.clone();
-    let total = snapshot.total;
-    let top_tags = snapshot.top_tags.clone();
     drop(snapshot);
 
     rsx! {
@@ -70,18 +72,41 @@ pub fn App() -> Element {
         style { "{APP_CSS}" }
         div {
             class: "{shell_class}",
-            {shell::left_rail(state, services.clone(), route, has_active_filters, total, top_tags, filters)}
+            tabindex: "0",
+            autofocus: true,
+            onmounted: move |event| async move {
+                let _ = event.set_focus(true).await;
+            },
+            onkeydown: move |event| {
+                let key = event.key();
+                let modifiers = event.modifiers();
+                if handle_global_keyboard(
+                    &services,
+                    &mut state,
+                    key,
+                    modifiers.ctrl() || modifiers.meta(),
+                ) {
+                    event.prevent_default();
+                }
+            },
+            {shell::top_bar(state, services.clone(), route)}
             main {
-                class: "main-column",
-                {hero_filters::hero_filters(state, services.clone())}
+                class: "main-column terminal-main",
                 {route_content::route_content(state, services.clone())}
             }
+            {shell::status_line(state, services.clone())}
         }
 
         if import_open {
             {import_modal::import_modal(state, services.clone())}
         }
 
-        footer { class: "status-bar", "{status_message}" }
+        if palette_open {
+            {shell::command_palette_overlay(state, services.clone())}
+        }
+
+        if keybindings_open {
+            {shell::keybindings_overlay(state)}
+        }
     }
 }

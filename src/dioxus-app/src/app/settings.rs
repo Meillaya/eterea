@@ -1,6 +1,6 @@
-use super::actions::set_remote_images_enabled;
-use super::design_system::{Density, PaperTone};
-use super::state::LibraryState;
+use super::actions::{enter_focus_scope, leave_focus_scope, set_remote_images_enabled};
+use super::design_system::{AccentChoice, Density, FontChoice, PaperTone, WeightChoice};
+use super::state::{FocusScope, LayoutMode, LibraryState};
 use dioxus::prelude::*;
 
 pub(crate) fn settings_screen(mut state: Signal<LibraryState>) -> Element {
@@ -19,15 +19,28 @@ pub(crate) fn settings_screen(mut state: Signal<LibraryState>) -> Element {
                 h4 { "Reading" }
                 div { class: "settings-row",
                     span { "Default layout" }
-                    strong { "{layout.as_str()}" }
-                    small { "changed from layout chips above" }
+                    div { class: "settings-options",
+                        for candidate in LayoutMode::ALL {
+                            button {
+                                class: if layout == candidate { "subtle-chip active" } else { "subtle-chip" },
+                                title: "{candidate.description()}",
+                                onfocus: move |_| enter_focus_scope(&mut state, FocusScope::SettingsControl),
+                                onblur: move |_| leave_focus_scope(&mut state, FocusScope::SettingsControl),
+                                onclick: move |_| state.write().layout = candidate.clone(),
+                                "{candidate.as_str()}"
+                            }
+                        }
+                    }
+                    small { "session view" }
                 }
                 div { class: "settings-row",
-                    span { "Paper tone" }
+                    span { "Theme" }
                     div { class: "settings-options",
                         for tone in PaperTone::ALL {
                             button {
                                 class: if appearance.paper_tone == tone { "subtle-chip active" } else { "subtle-chip" },
+                                onfocus: move |_| enter_focus_scope(&mut state, FocusScope::SettingsControl),
+                                onblur: move |_| leave_focus_scope(&mut state, FocusScope::SettingsControl),
                                 onclick: move |_| state.write().appearance.paper_tone = tone,
                                 "{tone.label()}"
                             }
@@ -41,6 +54,8 @@ pub(crate) fn settings_screen(mut state: Signal<LibraryState>) -> Element {
                         for density in Density::ALL {
                             button {
                                 class: if appearance.density == density { "subtle-chip active" } else { "subtle-chip" },
+                                onfocus: move |_| enter_focus_scope(&mut state, FocusScope::SettingsControl),
+                                onblur: move |_| leave_focus_scope(&mut state, FocusScope::SettingsControl),
                                 onclick: move |_| state.write().appearance.density = density,
                                 "{density.label()}"
                             }
@@ -49,9 +64,53 @@ pub(crate) fn settings_screen(mut state: Signal<LibraryState>) -> Element {
                     small { "session only" }
                 }
                 div { class: "settings-row",
+                    span { "Font" }
+                    div { class: "settings-options",
+                        for font in FontChoice::ALL {
+                            button {
+                                class: if appearance.font == font { "subtle-chip active" } else { "subtle-chip" },
+                                onfocus: move |_| enter_focus_scope(&mut state, FocusScope::SettingsControl),
+                                onblur: move |_| leave_focus_scope(&mut state, FocusScope::SettingsControl),
+                                onclick: move |_| state.write().appearance.font = font,
+                                "{font.label()}"
+                            }
+                        }
+                    }
+                    small { "session only" }
+                }
+                div { class: "settings-row",
+                    span { "Weight" }
+                    div { class: "settings-options",
+                        for weight in WeightChoice::ALL {
+                            button {
+                                class: if appearance.weight == weight { "subtle-chip active" } else { "subtle-chip" },
+                                onfocus: move |_| enter_focus_scope(&mut state, FocusScope::SettingsControl),
+                                onblur: move |_| leave_focus_scope(&mut state, FocusScope::SettingsControl),
+                                onclick: move |_| state.write().appearance.weight = weight,
+                                "{weight.label()}"
+                            }
+                        }
+                    }
+                    small { "session only" }
+                }
+                div { class: "settings-row",
                     span { "Accent" }
-                    strong { "{appearance.accent}" }
-                    small { "fixed in v0.1.0" }
+                    div { class: "settings-options",
+                        for accent in AccentChoice::ALL {
+                            button {
+                                class: if appearance.accent_choice == accent { "subtle-chip active" } else { "subtle-chip" },
+                                onfocus: move |_| enter_focus_scope(&mut state, FocusScope::SettingsControl),
+                                onblur: move |_| leave_focus_scope(&mut state, FocusScope::SettingsControl),
+                                onclick: move |_| {
+                                    let mut next = state.write();
+                                    next.appearance.accent_choice = accent;
+                                    next.appearance.accent = accent.color().to_string();
+                                },
+                                "{accent.label()}"
+                            }
+                        }
+                    }
+                    small { "{appearance.accent}" }
                 }
             }
             section { class: "settings-section",
@@ -62,11 +121,15 @@ pub(crate) fn settings_screen(mut state: Signal<LibraryState>) -> Element {
                         div { class: "settings-options",
                             button {
                                 class: if remote_images_enabled { "subtle-chip active" } else { "subtle-chip" },
+                                onfocus: move |_| enter_focus_scope(&mut state, FocusScope::SettingsControl),
+                                onblur: move |_| leave_focus_scope(&mut state, FocusScope::SettingsControl),
                                 onclick: move |_| set_remote_images_enabled(&mut state, true),
                                 "Load"
                             }
                             button {
                                 class: if remote_images_enabled { "subtle-chip" } else { "subtle-chip active" },
+                                onfocus: move |_| enter_focus_scope(&mut state, FocusScope::SettingsControl),
+                                onblur: move |_| leave_focus_scope(&mut state, FocusScope::SettingsControl),
                                 onclick: move |_| set_remote_images_enabled(&mut state, false),
                                 "Hide"
                             }

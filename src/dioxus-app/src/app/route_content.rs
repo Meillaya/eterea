@@ -1,6 +1,4 @@
-use super::actions::{
-    clear_expanded_bookmark, move_expanded_bookmark, reload_library, set_remote_images_enabled,
-};
+use super::actions::{reload_library, set_remote_images_enabled};
 use super::author_directory::{author_directory_status, visible_author_directory};
 use super::components::{MediaGallery, MediaGalleryMode};
 use super::onboarding::onboarding_screen;
@@ -22,25 +20,6 @@ pub(crate) fn route_content(mut state: Signal<LibraryState>, services: Services)
         section {
             class: "panel library-panel",
             tabindex: "0",
-            onkeydown: move |event| {
-                let key = event.key();
-                let mut next = state.write();
-                match key {
-                    Key::ArrowDown => move_expanded_bookmark(&mut next, 1),
-                    Key::ArrowUp => move_expanded_bookmark(&mut next, -1),
-                    Key::Character(value) if value.eq_ignore_ascii_case("j") => {
-                        move_expanded_bookmark(&mut next, 1);
-                    }
-                    Key::Character(value) if value.eq_ignore_ascii_case("k") => {
-                        move_expanded_bookmark(&mut next, -1);
-                    }
-                    Key::Escape => clear_expanded_bookmark(&mut next),
-                    Key::Character(value) if value == "/" => {
-                        next.status = "Use the search field above, then press Enter to search.".to_string();
-                    }
-                    _ => {}
-                }
-            },
             div {
                 class: "library-header",
                 div {
@@ -143,13 +122,22 @@ fn search_payload(state: Signal<LibraryState>, services: Services) -> Element {
 
 fn detail_or_feed(mut state: Signal<LibraryState>, services: Services, id: &str) -> Element {
     let snapshot = state.read();
-    let bookmark = snapshot
+    let mut bookmark = snapshot
         .bookmarks
         .iter()
         .find(|bookmark| bookmark.id == id)
         .cloned();
     let remote_images_enabled = snapshot.remote_images_enabled;
     drop(snapshot);
+
+    if bookmark.is_none() {
+        match services.borrow().bookmark_detail(id) {
+            Ok(detail) => bookmark = detail,
+            Err(error) => {
+                state.write().error = Some(error.to_string());
+            }
+        }
+    }
 
     if let Some(bookmark) = bookmark {
         let eterea_core::Bookmark {
@@ -161,28 +149,39 @@ fn detail_or_feed(mut state: Signal<LibraryState>, services: Services, id: &str)
             ..
         } = bookmark;
         let context_label = format!("@{author_handle} tweet");
+        let media_count = media.len();
         return rsx! {
-            article { class: "detail-screen",
-                p { class: "eyebrow", "From the archive" }
-                h3 { "@{author_handle}" }
-                p { class: "detail-content", "{content}" }
-                if let Some(note) = &note_text {
-                    blockquote { "{note}" }
+            article { class: "detail-screen terminal-detail",
+                section { class: "detail-main-pane",
+                    p { class: "eyebrow", "entry detail" }
+                    h3 { "@{author_handle}" }
+                    p { class: "detail-content", "{content}" }
+                    if let Some(note) = &note_text {
+                        blockquote { "{note}" }
+                    }
+                    div { class: "tag-list",
+                        for tag in &tags { span { class: "mini-tag", "#{tag}" } }
+                    }
+                    MediaGallery {
+                        media,
+                        remote_images_enabled,
+                        on_enable_remote_images: move |_| set_remote_images_enabled(&mut state, true),
+                        context_label,
+                        mode: MediaGalleryMode::Detail,
+                    }
                 }
-                div { class: "tag-list",
-                    for tag in &tags { span { class: "mini-tag", "#{tag}" } }
-                }
-                MediaGallery {
-                    media,
-                    remote_images_enabled,
-                    on_enable_remote_images: move |_| set_remote_images_enabled(&mut state, true),
-                    context_label,
-                    mode: MediaGalleryMode::Detail,
-                }
-                button {
-                    class: "ghost-button",
-                    onclick: move |_| state.write().route = ScreenRoute::Library,
-                    "← Back to library"
+                aside { class: "detail-meta-pane",
+                    p { class: "eyebrow", "metadata" }
+                    div { class: "detail-metric", span { "author" } strong { "@{author_handle}" } }
+                    div { class: "detail-metric", span { "tags" } strong { "{tags.len()}" } }
+                    div { class: "detail-metric", span { "media" } strong { "{media_count}" } }
+                    div { class: "detail-actions",
+                        button {
+                            class: "ghost-button",
+                            onclick: move |_| state.write().route = ScreenRoute::Library,
+                            "back to library"
+                        }
+                    }
                 }
             }
         };
@@ -193,14 +192,33 @@ fn detail_or_feed(mut state: Signal<LibraryState>, services: Services, id: &str)
 
 fn import_hint(mut state: Signal<LibraryState>) -> Element {
     rsx! {
-        div { class: "import-screen-hint",
-            p { class: "eyebrow", "Local import" }
+        div { class: "import-screen-hint terminal-import",
+            p { class: "eyebrow", "local import" }
             h4 { "Preview an export before it enters the archive." }
-            p { class: "muted-copy", "The import dialog accepts CSV, JSON, and X archive JS files. Preview is a dry parse; the final write is transactional and skips duplicate tweet URLs." }
-            button {
-                class: "accent-button",
-                onclick: move |_| state.write().import.open = true,
-                "Open import dialog"
+            p { class: "muted-copy", "CSV, JSON, and X archive JS stay local. Preview is a dry parse; the final write uses the existing SQLite transaction and duplicate tweet URL guardrails." }
+            div { class: "import-command-grid",
+                div { class: "import-command",
+                    span { "01" }
+                    strong { "select source" }
+                    p { "Choose a local export file; no network or credentialed sync is used." }
+                }
+                div { class: "import-command",
+                    span { "02" }
+                    strong { "preview" }
+                    p { "Dry-run counts format, sample rows, media presence, and duplicate policy." }
+                }
+                div { class: "import-command",
+                    span { "03" }
+                    strong { "commit" }
+                    p { "Persist only after preview or explicit import; duplicate tweet URLs are skipped." }
+                }
+            }
+            div { class: "terminal-actions",
+                button {
+                    class: "accent-button",
+                    onclick: move |_| state.write().import.open = true,
+                    "open import dialog"
+                }
             }
         }
     }

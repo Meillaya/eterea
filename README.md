@@ -34,10 +34,6 @@ HTML. Stored media URLs are treated cautiously: previews are hidden unless you
 explicitly enable them, and external opening is limited to explicit HTTPS user
 actions.
 
-If you are preparing public screenshots, use a reviewed fixture profile or a
-maintainer-approved preview archive. Do not accidentally publish private notes,
-real reading history, tokens, hostnames, or local filesystem paths.
-
 ## Quick start
 
 The easiest supported development path is Nix, because the desktop app needs a
